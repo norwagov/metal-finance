@@ -1,0 +1,70 @@
+{% macro csrf() -%}
+<input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+{%- endmacro %}
+
+{% macro avatar(person, size='') -%}
+<span class="avatar {{ size }}" style="background: {{ person.color }}" title="{{ person.name }}">{{ person.initials }}</span>
+{%- endmacro %}
+
+{% macro person_chip(person) -%}
+<span class="person-chip">{{ avatar(person, 'avatar-sm') }}<span>{{ person.name }}</span></span>
+{%- endmacro %}
+
+{% macro category_badge(cat) -%}
+{% if cat %}
+<span class="cat-badge" style="--cat: {{ cat.color }}">{{ cat.icon }} {{ cat.name }}</span>
+{% else %}
+<span class="cat-badge" style="--cat: #4b5563">❔ bez kategorii</span>
+{% endif %}
+{%- endmacro %}
+
+{% macro balance(cents, currency, pid=None) -%}
+<span class="money tone-{{ 'pos' if cents > 0 else 'neg' if cents < 0 else 'zero' }}" {% if pid %}data-bind="balance:{{ pid }}"{% endif %}>{{ cents|money(currency, sign=True) }}</span>
+{%- endmacro %}
+
+{#
+  Wiersz pozycji w arkuszu: edytowalne pola + checkboxy konsumentów (zapis od razu przez API).
+#}
+{% macro product_row(prod, trip, product_shares, back='bill', indent=False) -%}
+{% set shares = product_shares(prod) %}
+<tr data-product="{{ prod.id }}" class="product-row {% if not prod.consumers %}unassigned{% endif %}">
+  <td class="cell-name {% if indent %}ps-4{% endif %}">
+    <input class="cell-input js-field" data-product="{{ prod.id }}" data-field="name" value="{{ prod.name }}" aria-label="Nazwa pozycji">
+  </td>
+  <td class="cell-num cell-qty">
+    <input class="cell-input text-end js-field" data-product="{{ prod.id }}" data-field="quantity" value="{{ prod.quantity|qty }}" inputmode="decimal" aria-label="Ilość">
+  </td>
+  <td class="cell-num cell-price">
+    <input class="cell-input text-end js-field money" data-product="{{ prod.id }}" data-field="price" value="{{ prod.price|money_input }}" inputmode="decimal" aria-label="Kwota">
+  </td>
+  {% for p in trip.participants %}
+  <td class="cell-check">
+    <label class="consumer-toggle" style="--person: {{ p.color }}" title="{{ p.name }}">
+      <input type="checkbox" class="js-consumer" data-product="{{ prod.id }}" data-person="{{ p.id }}" {% if p in prod.consumers %}checked{% endif %} aria-label="{{ p.name }} - {{ prod.name }}">
+      <span class="tick"><i class="bi bi-check-lg"></i></span>
+    </label>
+    <span class="share" data-bind="share:{{ prod.id }}:{{ p.id }}">{{ shares[p.id]|money if p.id in shares else '' }}</span>
+  </td>
+  {% endfor %}
+  <td class="cell-actions text-nowrap">
+    <div class="btn-group btn-group-sm">
+      <button type="button" class="btn btn-outline-secondary" data-consumers-set="all" data-product="{{ prod.id }}" title="Wszyscy"><i class="bi bi-people-fill"></i></button>
+      <button type="button" class="btn btn-outline-secondary" data-consumers-set="none" data-product="{{ prod.id }}" title="Nikt"><i class="bi bi-person-dash"></i></button>
+    </div>
+    <form method="post" action="{{ url_for('bills.delete_product', product_id=prod.id) }}" class="d-inline" data-confirm="Usunąć pozycję „{{ prod.name }}”?">
+      {{ csrf() }}<input type="hidden" name="back" value="{{ back }}">
+      <button class="btn btn-sm btn-outline-danger" title="Usuń pozycję"><i class="bi bi-trash3"></i></button>
+    </form>
+  </td>
+</tr>
+{%- endmacro %}
+
+{% macro people_checkboxes(people, name='consumers', checked=None, prefix='c') -%}
+<div class="d-flex flex-wrap gap-2">
+  {% for p in people %}
+  <input type="checkbox" class="btn-check" name="{{ name }}" value="{{ p.id }}" id="{{ prefix }}-{{ p.id }}" autocomplete="off"
+         {% if checked is none or p.id in checked %}checked{% endif %}>
+  <label class="btn btn-person" for="{{ prefix }}-{{ p.id }}" style="--person: {{ p.color }}">{{ avatar(p, 'avatar-xs') }} {{ p.name }}</label>
+  {% endfor %}
+</div>
+{%- endmacro %}

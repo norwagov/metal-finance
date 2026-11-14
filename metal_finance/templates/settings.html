@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Ustawienia{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Ustawienia</h1>
+<div class="row g-4">
+  <div class="col-12 col-lg-7">
+    <div class="card">
+      <div class="card-header fw-semibold"><i class="bi bi-stars"></i> Claude - odczyt paragonów</div>
+      <div class="card-body">
+        <dl class="row mb-3">
+          <dt class="col-sm-4">Status</dt>
+          <dd class="col-sm-8">
+            {% if claude_ready %}<span class="text-success"><i class="bi bi-check-circle"></i> token subskrypcji ustawiony</span>
+            {% else %}<span class="text-warning"><i class="bi bi-exclamation-circle"></i> brak tokenu</span>{% endif %}
+          </dd>
+          <dt class="col-sm-4">Rozliczanie</dt>
+          <dd class="col-sm-8">subskrypcja Claude (Pro / Max) - <strong>bez</strong> płatnego API</dd>
+          <dt class="col-sm-4">Model</dt>
+          <dd class="col-sm-8"><code>{{ model }}</code> <span class="small text-secondary">(zmienna <code>CLAUDE_MODEL</code>)</span></dd>
+        </dl>
+        {% if result %}<div class="alert alert-{{ result[0] }}">{{ result[1] }}</div>{% endif %}
+        <form method="post" data-busy="Sprawdzam…">
+          {{ m.csrf() }}
+          <button class="btn btn-outline-light" {% if not claude_ready %}disabled{% endif %}><i class="bi bi-plug"></i> Sprawdź połączenie</button>
+        </form>
+        <hr>
+        <h2 class="h6">Jak podłączyć subskrypcję</h2>
+        <ol class="small mb-0">
+          <li>Na dowolnym komputerze z zainstalowanym Claude Code uruchom <code>claude setup-token</code> i zaloguj się kontem z planem Pro lub Max.</li>
+          <li>Skopiuj wypisany token (ważny rok) do <code>CLAUDE_CODE_OAUTH_TOKEN</code> w pliku <code>docker-compose.yml</code>.</li>
+          <li>Zrestartuj kontener: <code>docker compose up -d</code>.</li>
+        </ol>
+        <p class="small text-secondary mt-2 mb-0">Aplikacja celowo ignoruje <code>ANTHROPIC_API_KEY</code>, żeby nic nie poszło na rachunek płatnego API. Token daje dostęp do Twojej subskrypcji - trzymaj aplikację tylko dla swojej ekipy (ustaw <code>APP_PASSWORD</code>).</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-5">
+    <div class="card">
+      <div class="card-header fw-semibold"><i class="bi bi-hdd"></i> Dane</div>
+      <div class="card-body small">
+        <dl class="row mb-0">
+          <dt class="col-6">Rachunki</dt><dd class="col-6">{{ stats.bills }}</dd>
+          <dt class="col-6">Pozycje</dt><dd class="col-6">{{ stats.products }}</dd>
+          <dt class="col-6">Osoby</dt><dd class="col-6">{{ stats.people }}</dd>
+          <dt class="col-6">Katalog danych</dt><dd class="col-6"><code>{{ data_dir }}</code></dd>
+          <dt class="col-6">Hasło do aplikacji</dt><dd class="col-6">{{ 'włączone' if auth_enabled else 'wyłączone' }}</dd>
+          <dt class="col-6">Wersja</dt><dd class="col-6">{{ app_version }}</dd>
+        </dl>
+        <p class="text-secondary mt-3 mb-0">Kopia zapasowa: skopiuj cały wolumen <code>/data</code> (baza SQLite + zdjęcia).</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

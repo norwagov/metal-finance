@@ -1,0 +1,39 @@
+{% import '_macros.html' as m with context %}
+<div class="trip-hero mb-3">
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+    <div>
+      <a href="{{ url_for('trips.index') }}" class="small text-secondary text-decoration-none"><i class="bi bi-arrow-left"></i> Wyjazdy</a>
+      <h1 class="h3 mb-1 mt-1">{{ trip.name }}</h1>
+      <div class="small text-secondary">
+        {% if trip.start_date %}<i class="bi bi-calendar3"></i> {{ trip.start_date|pldate }}{% if trip.end_date and trip.end_date != trip.start_date %} – {{ trip.end_date|pldate }}{% endif %} · {% endif %}
+        {{ trip.bills|length }} rach. · waluta {{ trip.currency }}
+      </div>
+      <div class="d-flex flex-wrap gap-1 mt-2">
+        {% for p in trip.participants %}{{ m.person_chip(p) }}{% endfor %}
+      </div>
+    </div>
+    <div class="text-end">
+      <div class="small text-secondary text-uppercase">Wydatki razem</div>
+      <div class="display-total" data-bind="trip-total">{{ summary.total|money(trip.currency) }}</div>
+      <div class="mt-2 d-flex gap-2 justify-content-end">
+        <a class="btn btn-sm btn-outline-light" href="{{ url_for('trips.export_csv', trip_id=trip.id) }}" title="Eksport do Excela (CSV)"><i class="bi bi-filetype-csv"></i></a>
+        <a class="btn btn-sm btn-outline-light" href="{{ url_for('trips.edit', trip_id=trip.id) }}"><i class="bi bi-pencil"></i> Edytuj</a>
+      </div>
+    </div>
+  </div>
+  {% if trip.description %}<p class="mt-2 mb-0 text-secondary">{{ trip.description }}</p>{% endif %}
+</div>
+
+<ul class="nav nav-pills mf-tabs mb-3">
+  <li class="nav-item"><a class="nav-link {% if tab == 'bills' %}active{% endif %}" href="{{ url_for('trips.show', trip_id=trip.id) }}"><i class="bi bi-receipt"></i> Rachunki</a></li>
+  <li class="nav-item"><a class="nav-link {% if tab == 'table' %}active{% endif %}" href="{{ url_for('trips.table', trip_id=trip.id) }}"><i class="bi bi-table"></i> Tabela</a></li>
+  <li class="nav-item"><a class="nav-link {% if tab == 'settle' %}active{% endif %}" href="{{ url_for('trips.settle', trip_id=trip.id) }}"><i class="bi bi-arrow-left-right"></i> Rozliczenie</a></li>
+</ul>
+
+{% if summary.unassigned %}
+<div class="alert alert-warning py-2 small">
+  <i class="bi bi-exclamation-triangle"></i>
+  <span data-bind="unassigned-count">{{ summary.unassigned|length }}</span> poz. nie ma przypisanych konsumentów - nie są liczone w rozliczeniu (koszt zostaje u płacącego).
+  {% if tab != 'table' %}<a href="{{ url_for('trips.table', trip_id=trip.id) }}" class="alert-link">Uzupełnij w tabeli</a>.{% endif %}
+</div>
+{% endif %}

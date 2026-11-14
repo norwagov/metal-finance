@@ -1,0 +1,152 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}{{ bill.title }}{% endblock %}
+{% block content %}
+{% set cur = trip.currency %}
+<a href="{{ url_for('trips.show', trip_id=trip.id) }}" class="small text-secondary text-decoration-none"><i class="bi bi-arrow-left"></i> {{ trip.name }}</a>
+<div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mt-1 mb-3">
+  <div class="d-flex align-items-center gap-3">
+    <div class="bill-cat bill-cat-lg" style="--cat: {{ bill.category.color if bill.category else '#4b5563' }}">{{ bill.category.icon if bill.category else '❔' }}</div>
+    <div>
+      <h1 class="h3 mb-0">{{ bill.title }} {% if bill.source == 'ai' %}<span class="badge badge-ai align-middle">AI</span>{% endif %}</h1>
+      <div class="small text-secondary">{{ bill.date|pldate }} · płacił(a) {{ bill.payer.name }}</div>
+    </div>
+  </div>
+  <div class="text-end">
+    <div class="small text-secondary text-uppercase">Suma pozycji</div>
+    <div class="display-total" data-bind="bill-total:{{ bill.id }}">{{ bill.total|money(cur) }}</div>
+  </div>
+</div>
+
+<div class="alert alert-warning py-2 small {% if not bill.total_mismatch %}d-none{% endif %}" data-show-if-text>
+  <i class="bi bi-calculator"></i> <span data-bind="bill-mismatch:{{ bill.id }}">{% if bill.total_mismatch %}Suma pozycji różni się od paragonu o {{ bill.total_mismatch|money(cur, sign=True) }}{% endif %}</span>
+  (na paragonie: {{ bill.declared_total|money(cur) }}).
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-xxl-8 order-2 order-xxl-1">
+    <div class="card mb-4">
+      <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <span class="fw-semibold"><i class="bi bi-list-ul"></i> Pozycje</span>
+        <span class="small text-secondary">Zaznacz, kto korzystał - koszt dzieli się po równo</span>
+      </div>
+      <div class="sheet-wrap">
+        <table class="sheet">
+          <thead>
+            <tr>
+              <th class="cell-name">Pozycja</th>
+              <th class="cell-num">Ilość</th>
+              <th class="cell-num">Kwota</th>
+              {% for p in trip.participants %}
+              <th class="cell-check"><div class="d-flex flex-column align-items-center gap-1">{{ m.avatar(p, 'avatar-sm') }}<span class="person-head">{{ p.name }}</span></div></th>
+              {% endfor %}
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for prod in bill.products %}
+              {{ m.product_row(prod, trip, product_shares) }}
+            {% else %}
+            <tr><td colspan="{{ 4 + trip.participants|length }}" class="text-center text-secondary py-4">Brak pozycji - dodaj poniżej{% if bill.attachments and claude_ready %} albo odczytaj je ze zdjęcia przez Claude{% endif %}.</td></tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th class="cell-name" colspan="2">Na osobę</th>
+              <th class="cell-num money" data-bind="bill-total:{{ bill.id }}">{{ bill.total|money(cur) }}</th>
+              {% for p in trip.participants %}
+              <td class="cell-check money fw-semibold" data-bind="bill-share:{{ bill.id }}:{{ p.id }}">{{ shares[p.id]|money(cur) if p.id in shares else '—' }}</td>
+              {% endfor %}
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <form method="post" action="{{ url_for('bills.add_product', bill_id=bill.id) }}" class="card-body border-top" id="add-product">
+        {{ m.csrf() }}
+        <div class="small text-secondary mb-2">Dodaj pozycję</div>
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-md-6"><input class="form-control" name="name" placeholder="Nazwa, np. Pizza Diavola" required></div>
+          <div class="col-4 col-md-2"><input class="form-control text-end" name="quantity" placeholder="Ilość" value="1" inputmode="decimal"></div>
+          <div class="col-8 col-md-4"><input class="form-control text-end money" name="price" placeholder="Kwota za całość" inputmode="decimal" required></div>
+          <div class="col-12">{{ m.people_checkboxes(trip.participants, prefix='np') }}</div>
+          <div class="col-12 text-end"><button class="btn btn-metal"><i class="bi bi-plus-lg"></i> Dodaj pozycję</button></div>
+        </div>
+      </form>
+      {% if bill.products %}
+      <form method="post" action="{{ url_for('bills.bulk_consumers', bill_id=bill.id) }}" class="card-body border-top">
+        {{ m.csrf() }}
+        <div class="small text-secondary mb-2">Ustaw tych samych konsumentów dla wszystkich pozycji</div>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          {{ m.people_checkboxes(trip.participants, prefix='bulk') }}
+          <button class="btn btn-outline-light btn-sm ms-auto"><i class="bi bi-check2-all"></i> Zastosuj do wszystkich</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-xxl-4 order-1 order-xxl-2">
+    <div class="card mb-4">
+      <div class="card-header fw-semibold"><i class="bi bi-image"></i> Zdjęcia</div>
+      <div class="card-body">
+        {% if bill.attachments %}
+        <div class="photo-grid mb-3">
+          {% for att in bill.attachments %}
+          <div class="photo">
+            <a href="{{ url_for('bills.upload', name=att.filename) }}" target="_blank"><img src="{{ url_for('bills.upload', name=att.filename) }}" alt="Zdjęcie paragonu" loading="lazy"></a>
+            <form method="post" action="{{ url_for('bills.delete_photo', att_id=att.id) }}" data-confirm="Usunąć zdjęcie?">
+              {{ m.csrf() }}<button class="btn btn-sm btn-dark" title="Usuń zdjęcie"><i class="bi bi-x-lg"></i></button>
+            </form>
+          </div>
+          {% endfor %}
+        </div>
+        <form method="post" action="{{ url_for('bills.reparse', bill_id=bill.id) }}" class="mb-3" data-busy="Claude czyta paragon…"
+              {% if bill.products %}data-confirm="Odczytać pozycje ponownie? Obecne pozycje zostaną zastąpione."{% endif %}>
+          {{ m.csrf() }}<input type="hidden" name="replace" value="1">
+          <button class="btn btn-outline-warning w-100" {% if not claude_ready %}disabled title="Brak tokenu Claude"{% endif %}>
+            <i class="bi bi-magic"></i> {{ 'Odczytaj ponownie przez Claude' if bill.products else 'Odczytaj pozycje przez Claude' }}
+          </button>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ url_for('bills.add_photos', bill_id=bill.id) }}" enctype="multipart/form-data" class="d-flex gap-2">
+          {{ m.csrf() }}
+          <input class="form-control form-control-sm" type="file" name="photos" accept="image/*,.heic,.heif" multiple required>
+          <button class="btn btn-sm btn-outline-light text-nowrap"><i class="bi bi-upload"></i> Dodaj</button>
+        </form>
+      </div>
+    </div>
+
+    <form method="post" action="{{ url_for('bills.edit', bill_id=bill.id) }}" class="card mb-4">
+      {{ m.csrf() }}
+      <div class="card-header fw-semibold"><i class="bi bi-pencil"></i> Dane rachunku</div>
+      <div class="card-body vstack gap-2">
+        <div><label class="form-label small" for="title">Nazwa</label><input class="form-control" id="title" name="title" value="{{ bill.title }}" maxlength="200"></div>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label small" for="category_id">Kategoria</label>
+            <select class="form-select" id="category_id" name="category_id">
+              <option value="">— brak —</option>
+              {% for c in categories %}<option value="{{ c.id }}" {% if bill.category_id == c.id %}selected{% endif %}>{{ c.icon }} {{ c.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small" for="payer_id">Kto płacił</label>
+            <select class="form-select" id="payer_id" name="payer_id">
+              {% for p in trip.participants %}<option value="{{ p.id }}" {% if bill.payer_id == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-6"><label class="form-label small" for="date">Data</label><input class="form-control" type="date" id="date" name="date" value="{{ bill.date.isoformat() if bill.date else '' }}"></div>
+          <div class="col-6"><label class="form-label small" for="declared_total">Suma z paragonu</label><input class="form-control money" id="declared_total" name="declared_total" inputmode="decimal" value="{{ bill.declared_total|money_input }}" placeholder="do kontroli"></div>
+        </div>
+        <div><label class="form-label small" for="note">Notatka</label><textarea class="form-control" id="note" name="note" rows="2">{{ bill.note or '' }}</textarea></div>
+      </div>
+      <div class="card-footer d-flex justify-content-between">
+        <button type="submit" form="delete-bill" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash3"></i> Usuń rachunek</button>
+        <button class="btn btn-metal btn-sm"><i class="bi bi-check-lg"></i> Zapisz</button>
+      </div>
+    </form>
+    <form id="delete-bill" method="post" action="{{ url_for('bills.delete', bill_id=bill.id) }}" data-confirm="Usunąć rachunek „{{ bill.title }}” razem z pozycjami i zdjęciami?">{{ m.csrf() }}</form>
+  </div>
+</div>
+{% endblock %}

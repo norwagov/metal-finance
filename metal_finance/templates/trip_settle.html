@@ -1,0 +1,148 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Rozliczenie · {{ trip.name }}{% endblock %}
+{% block content %}
+{% include '_trip_header.html' %}
+{% set cur = trip.currency %}
+
+<div class="row g-4">
+  <div class="col-12 col-xl-7">
+    <div class="card mb-4">
+      <div class="card-header fw-semibold"><i class="bi bi-arrow-left-right"></i> Kto komu ile</div>
+      {% if summary.transfers %}
+      <ul class="list-group list-group-flush">
+        {% for t in summary.transfers %}
+        <li class="list-group-item transfer d-flex flex-wrap align-items-center gap-2">
+          <div class="d-flex align-items-center gap-2 flex-grow-1">
+            {{ m.person_chip(t.sender) }} <i class="bi bi-arrow-right fs-5 text-secondary"></i> {{ m.person_chip(t.receiver) }}
+          </div>
+          <div class="fs-5 fw-semibold money me-2">{{ t.amount|money(cur) }}</div>
+          <form method="post" action="{{ url_for('trips.add_payment', trip_id=trip.id) }}"
+                data-confirm="Zapisać, że {{ t.sender.name }} oddał(a) {{ t.receiver.name }} {{ t.amount|money(cur) }}?">
+            {{ m.csrf() }}
+            <input type="hidden" name="from_id" value="{{ t.sender.id }}">
+            <input type="hidden" name="to_id" value="{{ t.receiver.id }}">
+            <input type="hidden" name="amount" value="{{ t.amount|money_input }}">
+            <input type="hidden" name="note" value="spłata">
+            <button class="btn btn-sm btn-outline-success"><i class="bi bi-check2-circle"></i> Oddane</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="card-body text-center py-4">
+        <div class="fs-1">🤘</div>
+        <div class="fw-semibold">Wszyscy są kwita</div>
+        <div class="small text-secondary">{{ 'Nie ma jeszcze żadnych wydatków.' if not summary.total else 'Nikt nikomu nic nie wisi.' }}</div>
+      </div>
+      {% endif %}
+      <div class="card-body border-top">
+        <label class="form-label small text-secondary" for="share-text">Do wklejenia na grupę:</label>
+        <textarea id="share-text" class="form-control font-monospace small" rows="{{ [summary.transfers|length + 4, 10]|min }}" readonly>{{ share_text }}</textarea>
+        <button type="button" class="btn btn-sm btn-outline-light mt-2" data-copy="#share-text"><i class="bi bi-clipboard"></i> Kopiuj</button>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-header fw-semibold"><i class="bi bi-people"></i> Salda</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0 numbers">
+          <thead><tr><th>Osoba</th><th class="text-end">Zapłacił(a)</th><th class="text-end">Zużył(a)</th><th class="text-end">Spłaty wysłane</th><th class="text-end">Spłaty otrzymane</th><th class="text-end">Saldo</th></tr></thead>
+          <tbody>
+            {% for r in summary.people %}
+            <tr>
+              <td>{{ m.person_chip(r.person) }}</td>
+              <td class="text-end money">{{ r.paid|money(cur) }}</td>
+              <td class="text-end money">{{ r.consumed_cents|money(cur) }}</td>
+              <td class="text-end money text-secondary">{{ r.sent|money(cur) if r.sent else '—' }}</td>
+              <td class="text-end money text-secondary">{{ r.received|money(cur) if r.received else '—' }}</td>
+              <td class="text-end fw-semibold">{{ m.balance(r.balance, cur) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if summary.by_category %}
+    <div class="card mb-4">
+      <div class="card-header fw-semibold"><i class="bi bi-pie-chart"></i> Kto ile wydał na co</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0 numbers">
+          <thead><tr><th>Kategoria</th>{% for p in trip.participants %}<th class="text-end">{{ p.name }}</th>{% endfor %}<th class="text-end">Razem</th></tr></thead>
+          <tbody>
+            {% for cat, shares, total in summary.by_category %}
+            <tr>
+              <td>{{ m.category_badge(cat) }}</td>
+              {% for p in trip.participants %}<td class="text-end money">{{ shares[p.id]|money if p.id in shares else '—' }}</td>{% endfor %}
+              <td class="text-end money fw-semibold">{{ total|money(cur) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-body pt-2">
+        <div class="cat-bar">
+          {% for cat, shares, total in summary.by_category %}
+          <span style="width: {{ (100 * total / summary.settled_total)|round(2) }}%; background: {{ cat.color if cat else '#4b5563' }}" title="{{ cat.name if cat else 'bez kategorii' }}: {{ total|money(cur) }}"></span>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-12 col-xl-5">
+    <div class="card mb-4">
+      <div class="card-header fw-semibold"><i class="bi bi-cash-coin"></i> Zapisz spłatę</div>
+      <form method="post" action="{{ url_for('trips.add_payment', trip_id=trip.id) }}" class="card-body vstack gap-2">
+        {{ m.csrf() }}
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label small" for="from_id">Kto oddaje</label>
+            <select class="form-select" name="from_id" id="from_id">{% for p in trip.participants %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small" for="to_id">Komu</label>
+            <select class="form-select" name="to_id" id="to_id">{% for p in trip.participants %}<option value="{{ p.id }}" {% if loop.index == 2 %}selected{% endif %}>{{ p.name }}</option>{% endfor %}</select>
+          </div>
+          <div class="col-6">
+            <label class="form-label small" for="amount">Kwota ({{ currency_symbol(cur) }})</label>
+            <input class="form-control money" name="amount" id="amount" inputmode="decimal" required placeholder="0,00">
+          </div>
+          <div class="col-6">
+            <label class="form-label small" for="pdate">Data</label>
+            <input class="form-control" type="date" name="date" id="pdate" value="{{ today.isoformat() }}">
+          </div>
+          <div class="col-12">
+            <input class="form-control" name="note" placeholder="Notatka (np. BLIK)">
+          </div>
+        </div>
+        <button class="btn btn-metal"><i class="bi bi-plus-lg"></i> Zapisz spłatę</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <div class="card-header fw-semibold"><i class="bi bi-clock-history"></i> Historia spłat</div>
+      {% if trip.payments %}
+      <ul class="list-group list-group-flush">
+        {% for pay in trip.payments %}
+        <li class="list-group-item d-flex align-items-center gap-2">
+          <div class="flex-grow-1">
+            <div>{{ pay.sender.name }} <i class="bi bi-arrow-right text-secondary"></i> {{ pay.receiver.name }}</div>
+            <div class="small text-secondary">{{ pay.date|pldate }}{% if pay.note %} · {{ pay.note }}{% endif %}</div>
+          </div>
+          <span class="money fw-semibold">{{ pay.amount|money(cur) }}</span>
+          <form method="post" action="{{ url_for('trips.delete_payment', payment_id=pay.id) }}" data-confirm="Usunąć tę spłatę?">
+            {{ m.csrf() }}<button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-lg"></i></button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="card-body small text-secondary">Brak spłat. Kliknij „Oddane” przy przelewie albo zapisz spłatę ręcznie.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

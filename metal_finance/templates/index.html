@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Wyjazdy{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-4">
+  <div>
+    <h1 class="h3 mb-0">Wyjazdy i rozliczenia</h1>
+    <div class="text-secondary small">Każdy wyjazd to osobne rozliczenie: rachunki → pozycje → kto z czego korzystał.</div>
+  </div>
+  <a href="{{ url_for('trips.new') }}" class="btn btn-metal"><i class="bi bi-plus-lg"></i> Nowy wyjazd</a>
+</div>
+
+{% if not trips %}
+<div class="empty-state card">
+  <div class="card-body text-center py-5">
+    <img src="{{ url_for('static', filename='logo.svg') }}" width="72" height="72" alt="" class="mb-3">
+    <h2 class="h5">Jeszcze nic tu nie ma</h2>
+    <p class="text-secondary mb-4">Utwórz pierwszy wyjazd, dodaj ekipę i wrzucaj paragony - ręcznie albo zdjęciem przez Claude.</p>
+    <a href="{{ url_for('trips.new') }}" class="btn btn-metal"><i class="bi bi-plus-lg"></i> Utwórz wyjazd</a>
+  </div>
+</div>
+{% else %}
+<div class="row g-3">
+  {% for t in trips %}
+  <div class="col-12 col-md-6 col-xl-4">
+    <a href="{{ url_for('trips.show', trip_id=t.id) }}" class="card trip-card h-100 text-decoration-none">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <h2 class="h5 mb-1">{{ t.name }}</h2>
+          <span class="badge text-bg-dark border">{{ t.currency }}</span>
+        </div>
+        <div class="small text-secondary mb-3">
+          {% if t.start_date %}{{ t.start_date|pldate }}{% if t.end_date and t.end_date != t.start_date %} – {{ t.end_date|pldate }}{% endif %}{% else %}bez daty{% endif %}
+          · {{ t.bills|length }} rach.
+        </div>
+        <div class="d-flex justify-content-between align-items-end">
+          <div class="avatar-stack">{% for p in t.participants[:7] %}{{ m.avatar(p) }}{% endfor %}{% if t.participants|length > 7 %}<span class="avatar" style="background:#374151">+{{ t.participants|length - 7 }}</span>{% endif %}</div>
+          <div class="text-end">
+            <div class="small text-secondary">razem</div>
+            <div class="fw-semibold fs-5 money">{{ t.total|money(t.currency) }}</div>
+          </div>
+        </div>
+      </div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

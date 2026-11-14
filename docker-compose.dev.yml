@@ -1,0 +1,18 @@
+# Wersja deweloperska: buduje z lokalnego katalogu zamiast z repozytorium.
+#   docker compose -f docker-compose.dev.yml up --build
+services:
+  metal-finance:
+    build: .
+    image: metal-finance:dev
+    ports:
+      - "8080:8000"
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+      APP_PASSWORD: "${APP_PASSWORD:-}"
+      CLAUDE_MODEL: "${CLAUDE_MODEL:-opus}"
+      TZ: "Europe/Warsaw"
+    volumes:
+      - metal-finance-dev-data:/data
+
+volumes:
+  metal-finance-dev-data:

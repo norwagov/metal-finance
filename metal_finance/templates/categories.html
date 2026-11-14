@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Kategorie{% endblock %}
+{% block content %}
+<h1 class="h3 mb-1">Kategorie rachunków</h1>
+<p class="text-secondary small mb-4">Wspólne dla wszystkich wyjazdów. Claude przy skanowaniu paragonu wybiera jedną z nich.</p>
+
+<div class="row g-4">
+  <div class="col-12 col-lg-8">
+    <div class="card">
+      <ul class="list-group list-group-flush">
+        {% for c in categories %}
+        <li class="list-group-item">
+          <form method="post" action="{{ url_for('admin.update_category', cat_id=c.id) }}" class="row g-2 align-items-center">
+            {{ m.csrf() }}
+            <div class="col-2 col-md-1"><input class="form-control text-center emoji-input" name="icon" value="{{ c.icon }}" maxlength="8" aria-label="Ikona"></div>
+            <div class="col-10 col-md-5"><input class="form-control" name="name" value="{{ c.name }}" maxlength="60" aria-label="Nazwa"></div>
+            <div class="col-3 col-md-2"><input class="form-control form-control-color w-100" type="color" name="color" value="{{ c.color }}" aria-label="Kolor"></div>
+            <div class="col-9 col-md-4 d-flex align-items-center justify-content-end gap-2">
+              <span class="small text-secondary me-auto">{{ counts.get(c.id, 0) }} rach.</span>
+              <button class="btn btn-sm btn-outline-light" title="Zapisz"><i class="bi bi-check-lg"></i></button>
+              <button class="btn btn-sm btn-outline-danger" form="del-cat-{{ c.id }}" title="Usuń"><i class="bi bi-trash3"></i></button>
+            </div>
+          </form>
+          <form id="del-cat-{{ c.id }}" method="post" action="{{ url_for('admin.delete_category', cat_id=c.id) }}"
+                data-confirm="Usunąć kategorię „{{ c.name }}”? {{ counts.get(c.id, 0) }} rach. zostanie bez kategorii.">{{ m.csrf() }}</form>
+        </li>
+        {% else %}
+        <li class="list-group-item text-secondary">Brak kategorii.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-12 col-lg-4">
+    <form method="post" class="card">
+      {{ m.csrf() }}
+      <div class="card-header fw-semibold"><i class="bi bi-plus-lg"></i> Nowa kategoria</div>
+      <div class="card-body vstack gap-2">
+        <div class="row g-2">
+          <div class="col-3"><input class="form-control text-center emoji-input" name="icon" placeholder="🎟️" maxlength="8" aria-label="Ikona"></div>
+          <div class="col-9"><input class="form-control" name="name" placeholder="np. Parking" required maxlength="60" aria-label="Nazwa"></div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          <label class="small text-secondary" for="new-color">Kolor</label>
+          <input class="form-control form-control-color" type="color" id="new-color" name="color" value="#e8541e">
+        </div>
+        <div class="d-flex flex-wrap gap-1 emoji-picker" data-target="input[name=icon]">
+          {% for e in ['⛽','🍔','🍕','🍺','🍷','☕','🛒','🏨','⛺','🚗','🚆','✈️','🅿️','🎸','🎟️','🎳','💊','🎁','🧾'] %}
+          <button type="button" class="btn btn-sm btn-outline-secondary" data-emoji="{{ e }}">{{ e }}</button>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="card-footer text-end"><button class="btn btn-metal"><i class="bi bi-plus-lg"></i> Dodaj</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "metal-finance",
+      "runtimeExecutable": ".venv/bin/flask",
+      "runtimeArgs": ["--app", "wsgi", "run", "--port", "5055", "--debug"],
+      "port": 5055
+    }
+  ]
+}

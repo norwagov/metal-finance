@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Tabela · {{ trip.name }}{% endblock %}
+{% block content %}
+{% include '_trip_header.html' %}
+
+<p class="small text-secondary mb-2">
+  <i class="bi bi-info-circle"></i> Zaznacz, kto korzystał z każdej pozycji - koszt dzieli się po równo między zaznaczonych.
+  Nazwy, ilości i kwoty edytujesz bezpośrednio w komórkach; zmiany zapisują się od razu.
+</p>
+
+{% if not bills %}
+<div class="card"><div class="card-body text-center text-secondary py-5">Brak rachunków - <a href="{{ url_for('trips.show', trip_id=trip.id) }}">dodaj pierwszy</a>.</div></div>
+{% else %}
+<div class="sheet-wrap card">
+  <table class="sheet">
+    <thead>
+      <tr>
+        <th class="cell-name">Rachunek / pozycja</th>
+        <th class="cell-num">Ilość</th>
+        <th class="cell-num">Kwota</th>
+        {% for p in trip.participants %}
+        <th class="cell-check"><div class="d-flex flex-column align-items-center gap-1">{{ m.avatar(p, 'avatar-sm') }}<span class="person-head">{{ p.name }}</span></div></th>
+        {% endfor %}
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for b in bills %}
+      <tr class="bill-row">
+        <td class="cell-name" colspan="2">
+          <div class="d-flex align-items-center gap-2">
+            <span class="bill-cat bill-cat-sm" style="--cat: {{ b.category.color if b.category else '#4b5563' }}">{{ b.category.icon if b.category else '❔' }}</span>
+            <div class="min-w-0">
+              <a href="{{ url_for('bills.show', bill_id=b.id) }}" class="fw-semibold text-decoration-none">{{ b.title }}</a>
+              <div class="small text-secondary">{{ b.date|pldate }} · płacił(a) {{ b.payer.name }}</div>
+            </div>
+          </div>
+        </td>
+        <td class="cell-num fw-semibold money" data-bind="bill-total:{{ b.id }}">{{ b.total|money(trip.currency) }}</td>
+        {% set bsh = bill_shares(b) %}
+        {% for p in trip.participants %}
+        <td class="cell-check small bill-share {% if p.id == b.payer_id %}is-payer{% endif %}">
+          {% if p.id == b.payer_id %}<i class="bi bi-wallet2" title="{{ p.name }} płacił(a) za ten rachunek"></i>{% endif %}
+          <span class="money" data-bind="bill-share:{{ b.id }}:{{ p.id }}">{{ bsh[p.id]|money(trip.currency) if p.id in bsh else '—' }}</span>
+        </td>
+        {% endfor %}
+        <td></td>
+      </tr>
+      {% for prod in b.products %}
+        {{ m.product_row(prod, trip, product_shares, back='table', indent=True) }}
+      {% else %}
+      <tr><td colspan="{{ 4 + trip.participants|length }}" class="ps-4 small text-secondary">brak pozycji - <a href="{{ url_for('bills.show', bill_id=b.id) }}">dodaj</a></td></tr>
+      {% endfor %}
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <th class="cell-name" colspan="2">Zapłacił(a)</th>
+        <th class="cell-num money"></th>
+        {% for r in summary.people if r.person in trip.participants %}
+        <td class="cell-check money" data-bind="paid:{{ r.person.id }}">{{ r.paid|money(trip.currency) }}</td>
+        {% endfor %}
+        <td></td>
+      </tr>
+      <tr>
+        <th class="cell-name" colspan="2">Zużył(a)</th>
+        <th class="cell-num money"></th>
+        {% for r in summary.people if r.person in trip.participants %}
+        <td class="cell-check money" data-bind="consumed:{{ r.person.id }}">{{ r.consumed_cents|money(trip.currency) }}</td>
+        {% endfor %}
+        <td></td>
+      </tr>
+      <tr class="row-balance">
+        <th class="cell-name" colspan="2">Saldo <span class="small text-secondary fw-normal">(+ dostaje, − oddaje)</span></th>
+        <th class="cell-num"></th>
+        {% for r in summary.people if r.person in trip.participants %}
+        <td class="cell-check fw-semibold">{{ m.balance(r.balance, trip.currency, r.person.id) }}</td>
+        {% endfor %}
+        <td></td>
+      </tr>
+    </tfoot>
+  </table>
+</div>
+<div class="small text-secondary mt-2">Saldo uwzględnia też zapisane spłaty z zakładki Rozliczenie.</div>
+{% endif %}
+{% endblock %}

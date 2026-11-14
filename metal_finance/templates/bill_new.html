@@ -1,0 +1,101 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}{{ 'Skan paragonu' if mode == 'ai' else 'Nowy rachunek' }}{% endblock %}
+{% block content %}
+{% set chosen_consumers = form.getlist('consumers')|map('int')|list if form else None %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+    <a href="{{ url_for('trips.show', trip_id=trip.id) }}" class="small text-secondary text-decoration-none"><i class="bi bi-arrow-left"></i> {{ trip.name }}</a>
+    <h1 class="h3 mt-1 mb-3">{{ 'Zeskanuj paragon' if mode == 'ai' else 'Nowy rachunek' }}</h1>
+
+    <ul class="nav nav-pills mf-tabs mb-3">
+      <li class="nav-item"><a class="nav-link {% if mode == 'ai' %}active{% endif %}" href="{{ url_for('bills.new', trip_id=trip.id, mode='ai') }}"><i class="bi bi-camera"></i> Zdjęcie + Claude</a></li>
+      <li class="nav-item"><a class="nav-link {% if mode == 'manual' %}active{% endif %}" href="{{ url_for('bills.new', trip_id=trip.id, mode='manual') }}"><i class="bi bi-pencil-square"></i> Ręcznie</a></li>
+    </ul>
+
+    {% if mode == 'ai' and not claude_ready %}
+    <div class="alert alert-warning">
+      <i class="bi bi-key"></i> Brak tokenu subskrypcji Claude (<code>CLAUDE_CODE_OAUTH_TOKEN</code>). Zdjęcie zapisze się, ale pozycje trzeba będzie wpisać ręcznie.
+      <a href="{{ url_for('admin.settings') }}" class="alert-link">Jak skonfigurować?</a>
+    </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="card" {% if mode == 'ai' %}data-busy="Claude czyta paragon…"{% endif %}>
+      {{ m.csrf() }}
+      <input type="hidden" name="mode" value="{{ mode }}">
+      <div class="card-body vstack gap-3">
+        {% if mode == 'ai' %}
+        <div>
+          <label class="dropzone" for="photos">
+            <i class="bi bi-camera fs-1"></i>
+            <span class="fw-semibold">Zrób zdjęcie lub wybierz pliki</span>
+            <span class="small text-secondary">Długi paragon? Dodaj kilka zdjęć - Claude potraktuje je jako jeden rachunek.</span>
+            <span class="small dz-files text-info"></span>
+          </label>
+          <input class="visually-hidden" type="file" id="photos" name="photos" accept="image/*,.heic,.heif" multiple required>
+        </div>
+        {% endif %}
+
+        <div class="row g-3">
+          <div class="col-md-7">
+            <label class="form-label" for="title">Nazwa {% if mode == 'ai' %}<span class="text-secondary">(puste = z paragonu)</span>{% endif %}</label>
+            <input class="form-control" id="title" name="title" maxlength="200" value="{{ form.get('title', '') }}"
+                   placeholder="{{ 'np. Biedronka' if mode == 'ai' else 'np. Paliwo Orlen, Pizza, Nocleg' }}">
+          </div>
+          <div class="col-md-5">
+            <label class="form-label" for="category_id">Kategoria</label>
+            <select class="form-select" id="category_id" name="category_id">
+              <option value="">{{ '— Claude dobierze —' if mode == 'ai' else '— bez kategorii —' }}</option>
+              {% for c in categories %}<option value="{{ c.id }}" {% if form.get('category_id') == c.id|string %}selected{% endif %}>{{ c.icon }} {{ c.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-6 col-md-4">
+            <label class="form-label" for="payer_id">Kto płacił</label>
+            <select class="form-select" id="payer_id" name="payer_id" required>
+              {% for p in trip.participants %}<option value="{{ p.id }}" {% if (form.get('payer_id') or default_payer|string) == p.id|string %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-6 col-md-4">
+            <label class="form-label" for="date">Data</label>
+            <input class="form-control" type="date" id="date" name="date" value="{{ form.get('date', '' if mode == 'ai' else today.isoformat()) }}">
+            {% if mode == 'ai' %}<div class="form-text">puste = z paragonu</div>{% endif %}
+          </div>
+          {% if mode == 'manual' %}
+          <div class="col-12 col-md-4">
+            <label class="form-label" for="amount">Kwota ({{ currency_symbol(trip.currency) }})</label>
+            <input class="form-control money" id="amount" name="amount" inputmode="decimal" value="{{ form.get('amount', '') }}" placeholder="0,00">
+            <div class="form-text">puste = dodasz pozycje osobno</div>
+          </div>
+          {% endif %}
+        </div>
+
+        <div>
+          <label class="form-label d-block">{{ 'Domyślnie wszystkie pozycje dla' if mode == 'ai' else 'Kto korzystał' }}</label>
+          {{ m.people_checkboxes(trip.participants, checked=chosen_consumers) }}
+          {% if mode == 'ai' %}<div class="form-text">Po odczycie możesz zmienić konsumentów każdej pozycji osobno.</div>{% endif %}
+        </div>
+
+        {% if mode == 'manual' %}
+        <div>
+          <label class="form-label" for="photos">Zdjęcie paragonu <span class="text-secondary">(opcjonalnie)</span></label>
+          <input class="form-control" type="file" id="photos" name="photos" accept="image/*,.heic,.heif" multiple>
+        </div>
+        {% endif %}
+        <div>
+          <label class="form-label" for="note">Notatka <span class="text-secondary">(opcjonalnie)</span></label>
+          <input class="form-control" id="note" name="note" value="{{ form.get('note', '') }}">
+        </div>
+      </div>
+      <div class="card-footer d-flex flex-wrap flex-row-reverse gap-2">
+        {% if mode == 'ai' %}
+        <button class="btn btn-metal" type="submit"><i class="bi bi-magic"></i> Wyślij do Claude</button>
+        {% else %}
+        {# pierwszy w DOM = domyślny dla Enter #}
+        <button class="btn btn-metal" type="submit" name="next" value="trip"><i class="bi bi-check-lg"></i> Zapisz</button>
+        <button class="btn btn-outline-light" type="submit" name="next" value="items"><i class="bi bi-list-ul"></i> Zapisz i dodaj pozycje</button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

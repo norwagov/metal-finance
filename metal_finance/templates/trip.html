@@ -1,0 +1,109 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}{{ trip.name }}{% endblock %}
+{% block content %}
+{% include '_trip_header.html' %}
+
+<div class="row g-4">
+  <div class="col-12 col-lg-8">
+    <div class="row g-3 mb-3">
+      <div class="col-sm-6">
+        <a href="{{ url_for('bills.new', trip_id=trip.id, mode='ai') }}" class="card action-card action-ai h-100 text-decoration-none">
+          <div class="card-body d-flex gap-3 align-items-center">
+            <div class="action-icon"><i class="bi bi-camera"></i></div>
+            <div>
+              <div class="fw-semibold">Zeskanuj paragon</div>
+              <div class="small text-secondary">Zdjęcie → Claude odczyta pozycje{% if not claude_ready %} <span class="text-warning">(brak tokenu)</span>{% endif %}</div>
+            </div>
+          </div>
+        </a>
+      </div>
+      <div class="col-sm-6">
+        <a href="{{ url_for('bills.new', trip_id=trip.id, mode='manual') }}" class="card action-card h-100 text-decoration-none">
+          <div class="card-body d-flex gap-3 align-items-center">
+            <div class="action-icon"><i class="bi bi-pencil-square"></i></div>
+            <div>
+              <div class="fw-semibold">Dodaj ręcznie</div>
+              <div class="small text-secondary">Kwota od ręki albo pozycja po pozycji</div>
+            </div>
+          </div>
+        </a>
+      </div>
+    </div>
+
+    {% if used_categories or has_uncategorized %}
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      <a href="{{ url_for('trips.show', trip_id=trip.id) }}" class="btn btn-sm {% if not cat_filter %}btn-light{% else %}btn-outline-secondary{% endif %}">Wszystkie</a>
+      {% for c in used_categories %}
+      <a href="{{ url_for('trips.show', trip_id=trip.id, category=c.id) }}" class="btn btn-sm {% if cat_filter == c.id|string %}btn-light{% else %}btn-outline-secondary{% endif %}">{{ c.icon }} {{ c.name }}</a>
+      {% endfor %}
+      {% if has_uncategorized %}
+      <a href="{{ url_for('trips.show', trip_id=trip.id, category='none') }}" class="btn btn-sm {% if cat_filter == 'none' %}btn-light{% else %}btn-outline-secondary{% endif %}">❔ bez kategorii</a>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if not bills %}
+    <div class="card"><div class="card-body text-center text-secondary py-5">
+      <i class="bi bi-receipt fs-1 d-block mb-2"></i>
+      {{ 'Brak rachunków w tej kategorii.' if cat_filter else 'Brak rachunków. Dodaj pierwszy - zdjęciem albo ręcznie.' }}
+    </div></div>
+    {% else %}
+    <div class="list-group bill-list">
+      {% for b in bills %}
+      <a href="{{ url_for('bills.show', bill_id=b.id) }}" class="list-group-item list-group-item-action bill-item">
+        <div class="bill-cat" style="--cat: {{ b.category.color if b.category else '#4b5563' }}">{{ b.category.icon if b.category else '❔' }}</div>
+        <div class="flex-grow-1 min-w-0">
+          <div class="fw-semibold text-truncate">{{ b.title }}
+            {% if b.source == 'ai' %}<span class="badge badge-ai ms-1" title="Odczytane przez Claude">AI</span>{% endif %}
+            {% if b.attachments %}<i class="bi bi-image text-secondary ms-1" title="Ma zdjęcie"></i>{% endif %}
+          </div>
+          <div class="small text-secondary">
+            {{ b.date|pldate }} · płacił(a) {{ b.payer.name }} · {{ b.products|length }} poz.
+            {% if b.unassigned_count %}<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> {{ b.unassigned_count }} bez konsumentów</span>{% endif %}
+            {% if b.total_mismatch %}<span class="text-warning"><i class="bi bi-calculator"></i> ≠ paragon</span>{% endif %}
+          </div>
+        </div>
+        <div class="text-end ms-2">
+          <div class="fw-semibold money">{{ b.total|money(trip.currency) }}</div>
+          {{ m.avatar(b.payer, 'avatar-xs') }}
+        </div>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-12 col-lg-4">
+    <div class="card sticky-lg-top" style="top: 80px">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-semibold">Salda</span>
+        <a href="{{ url_for('trips.settle', trip_id=trip.id) }}" class="small">Kto komu ile →</a>
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for r in summary.people %}
+        <li class="list-group-item d-flex align-items-center gap-2">
+          {{ m.avatar(r.person) }}
+          <div class="flex-grow-1">
+            <div>{{ r.person.name }}</div>
+            <div class="small text-secondary">zapłacił(a) {{ r.paid|money(trip.currency) }} · zużył(a) {{ r.consumed_cents|money(trip.currency) }}</div>
+          </div>
+          {{ m.balance(r.balance, trip.currency) }}
+        </li>
+        {% endfor %}
+      </ul>
+      {% if summary.transfers %}
+      <div class="card-body border-top">
+        <div class="small text-secondary mb-2">Do przelania:</div>
+        {% for t in summary.transfers %}
+        <div class="d-flex justify-content-between small mb-1">
+          <span>{{ t.sender.name }} <i class="bi bi-arrow-right text-secondary"></i> {{ t.receiver.name }}</span>
+          <span class="money fw-semibold">{{ t.amount|money(trip.currency) }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

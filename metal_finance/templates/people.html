@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Ekipa{% endblock %}
+{% block content %}
+<h1 class="h3 mb-1">Ekipa</h1>
+<p class="text-secondary small mb-4">Lista osób wspólna dla wszystkich wyjazdów. Do konkretnego wyjazdu dodajesz je w jego edycji.</p>
+<div class="row g-4">
+  <div class="col-12 col-lg-8">
+    <div class="card">
+      <ul class="list-group list-group-flush">
+        {% for p in people %}
+        <li class="list-group-item">
+          <form method="post" action="{{ url_for('admin.rename_person', person_id=p.id) }}" class="d-flex align-items-center gap-2">
+            {{ m.csrf() }}
+            {{ m.avatar(p) }}
+            <input class="form-control" name="name" value="{{ p.name }}" maxlength="80" aria-label="Imię">
+            <span class="small text-secondary text-nowrap">{{ trips_count.get(p.id, 0) }} wyj.</span>
+            <button class="btn btn-sm btn-outline-light" title="Zapisz"><i class="bi bi-check-lg"></i></button>
+            <button class="btn btn-sm btn-outline-danger" form="del-p-{{ p.id }}" title="Usuń"><i class="bi bi-trash3"></i></button>
+          </form>
+          <form id="del-p-{{ p.id }}" method="post" action="{{ url_for('admin.delete_person', person_id=p.id) }}" data-confirm="Usunąć {{ p.name }}?">{{ m.csrf() }}</form>
+        </li>
+        {% else %}
+        <li class="list-group-item text-secondary">Nikogo jeszcze nie ma.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-12 col-lg-4">
+    <form method="post" class="card">
+      {{ m.csrf() }}
+      <div class="card-header fw-semibold"><i class="bi bi-person-plus"></i> Dodaj osobę</div>
+      <div class="card-body"><input class="form-control" name="name" placeholder="Imię lub ksywka" required maxlength="80"></div>
+      <div class="card-footer text-end"><button class="btn btn-metal"><i class="bi bi-plus-lg"></i> Dodaj</button></div>
+    </form>
+  </div>
+</div>
+{% endblock %}
