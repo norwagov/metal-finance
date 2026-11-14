@@ -141,9 +141,33 @@ class Product(db.Model):
     quantity = db.Column(db.Float, default=1.0, nullable=False)
     price = db.Column(db.Integer, nullable=False, default=0)  # kwota za całą pozycję, w groszach
     position = db.Column(db.Integer, default=0, nullable=False)
+    # True = koszt dzieli się proporcjonalnie do wag konsumentów zamiast po równo
+    weighted = db.Column(db.Boolean, default=False, nullable=False, server_default="0")
 
     bill = db.relationship("Bill", back_populates="products")
     consumers = db.relationship("Person", secondary=product_consumers, order_by="Person.name")
+    weights = db.relationship("ProductWeight", cascade="all, delete-orphan", lazy="selectin")
+
+    def weight_of(self, person_id: int) -> float:
+        """Waga osoby w tej pozycji (domyślnie 1)."""
+        for w in self.weights:
+            if w.person_id == person_id:
+                return w.weight
+        return 1.0
+
+    def set_weight(self, person_id: int, weight: float) -> None:
+        for w in self.weights:
+            if w.person_id == person_id:
+                w.weight = weight
+                return
+        self.weights.append(ProductWeight(person_id=person_id, weight=weight))
+
+
+class ProductWeight(db.Model):
+    """Waga osoby w pozycji - używana tylko, gdy pozycja ma włączone wagi (Product.weighted)."""
+    product_id = db.Column(db.ForeignKey("product.id", ondelete="CASCADE"), primary_key=True)
+    person_id = db.Column(db.ForeignKey("person.id", ondelete="CASCADE"), primary_key=True)
+    weight = db.Column(db.Float, nullable=False, default=1.0)
 
 
 class Attachment(db.Model):
@@ -180,6 +204,14 @@ DEFAULT_CATEGORIES = [
     ("Bilety i atrakcje", "🎸", "#ef4444"),
     ("Inne", "🧾", "#6b7280"),
 ]
+
+
+def upgrade_schema() -> None:
+    """Dokłada kolumny dodane po pierwszym wydaniu (create_all nie zmienia istniejących tabel)."""
+    insp = db.inspect(db.engine)
+    if "weighted" not in {c["name"] for c in insp.get_columns("product")}:
+        with db.engine.begin() as conn:
+            conn.execute(db.text("ALTER TABLE product ADD COLUMN weighted BOOLEAN NOT NULL DEFAULT 0"))
 
 
 def seed_defaults() -> None:

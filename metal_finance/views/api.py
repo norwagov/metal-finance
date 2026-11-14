@@ -52,7 +52,12 @@ def _state(prod: Product) -> dict:
         "ok": True,
         "bind": bind,
         "tone": tone,
-        "rows": {str(prod.id): {"consumers": [c.id for c in prod.consumers], "unassigned": not prod.consumers}},
+        "rows": {str(prod.id): {
+            "consumers": [c.id for c in prod.consumers],
+            "unassigned": not prod.consumers,
+            "weighted": prod.weighted,
+            "weights": {str(p.id): fmt_qty(prod.weight_of(p.id)) for p in trip.participants},
+        }},
         "values": {"name": prod.name, "quantity": fmt_qty(prod.quantity), "price": fmt_input(prod.price)},
         "flags": {"unassigned_any": bool(summary.unassigned), f"bill-unassigned:{bill.id}": bill.unassigned_count > 0},
     }
@@ -94,6 +99,8 @@ def update_product(product_id: int):
             prod.name = clean(str(data["name"])) or prod.name
         if "quantity" in data:
             prod.quantity = parse_quantity(data["quantity"])
+        if "weighted" in data:
+            prod.weighted = bool(data["weighted"])
         if "price" in data:
             price = parse_money(data["price"])
             if price is None:
@@ -102,5 +109,26 @@ def update_product(product_id: int):
     except ValueError as exc:
         db.session.rollback()
         return _error(str(exc))
+    db.session.commit()
+    return jsonify(_state(prod))
+
+
+MAX_WEIGHT = 1000
+
+
+@bp.post("/products/<int:product_id>/weights")
+def set_weight(product_id: int):
+    prod = db.get_or_404(Product, product_id)
+    data = request.get_json(silent=True) or {}
+    person = next((p for p in prod.bill.trip.participants if p.id == data.get("person_id")), None)
+    if person is None:
+        return _error("Ta osoba nie jest uczestnikiem wyjazdu.")
+    try:
+        weight = parse_quantity(data.get("weight"))
+    except ValueError:
+        return _error("Waga musi być liczbą, np. 1 albo 1,5.")
+    if not 0 <= weight <= MAX_WEIGHT:
+        return _error(f"Waga musi być w zakresie 0-{MAX_WEIGHT}.")
+    prod.set_weight(person.id, weight)
     db.session.commit()
     return jsonify(_state(prod))
