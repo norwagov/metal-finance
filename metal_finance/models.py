@@ -155,6 +155,13 @@ class Product(db.Model):
                 return w.weight
         return 1.0
 
+    @property
+    def weights_locked(self) -> bool:
+        """Wag nie da się wyłączyć, dopóki zmieniają podział (konsumenci mają różne wagi)."""
+        if not self.weighted:
+            return False
+        return len({self.weight_of(c.id) for c in self.consumers}) > 1
+
     def set_weight(self, person_id: int, weight: float) -> None:
         for w in self.weights:
             if w.person_id == person_id:

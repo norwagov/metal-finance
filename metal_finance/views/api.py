@@ -11,6 +11,9 @@ from . import clean
 bp = Blueprint("api", __name__, url_prefix="/api")
 
 
+WEIGHTS_LOCKED_MSG = "Wagi zmieniają podział - ustaw wszystkim tę samą wagę (np. 1), żeby je wyłączyć."
+
+
 def _tone(cents: int) -> str:
     return "pos" if cents > 0 else "neg" if cents < 0 else "zero"
 
@@ -56,6 +59,7 @@ def _state(prod: Product) -> dict:
             "consumers": [c.id for c in prod.consumers],
             "unassigned": not prod.consumers,
             "weighted": prod.weighted,
+            "locked": prod.weights_locked,
             "weights": {str(p.id): fmt_qty(prod.weight_of(p.id)) for p in trip.participants},
         }},
         "values": {"name": prod.name, "quantity": fmt_qty(prod.quantity), "price": fmt_input(prod.price)},
@@ -100,6 +104,8 @@ def update_product(product_id: int):
         if "quantity" in data:
             prod.quantity = parse_quantity(data["quantity"])
         if "weighted" in data:
+            if not data["weighted"] and prod.weights_locked:
+                return _error(WEIGHTS_LOCKED_MSG)
             prod.weighted = bool(data["weighted"])
         if "price" in data:
             price = parse_money(data["price"])

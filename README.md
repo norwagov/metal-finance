@@ -71,7 +71,7 @@ Bez tokenu aplikacja działa normalnie - zdjęcie zapisze się przy rachunku, a 
 
 - Płatnik rachunku „zapłacił” sumę jego pozycji.
 - Koszt pozycji dzieli się po równo między zaznaczonych konsumentów (dokładnie, na ułamkach - zaokrąglenie do grosza dopiero na końcu, salda zawsze sumują się do zera).
-- Po włączeniu **wag** w pozycji (przycisk z suwakami w wierszu) przy każdej osobie pojawia się waga (domyślnie 1) i koszt dzieli się proporcjonalnie - np. wagi 2 i 1 przy 30 zł dają 20 zł i 10 zł. Waga 0 = osoba zaznaczona, ale nie płaci. Wyłączenie wag wraca do podziału po równo (wagi zostają zapamiętane).
+- Po włączeniu **wag** w pozycji (przycisk z suwakami w wierszu) przy każdej osobie pojawia się waga (domyślnie 1) i koszt dzieli się proporcjonalnie - np. wagi 2 i 1 przy 30 zł dają 20 zł i 10 zł. Waga 0 = osoba zaznaczona, ale nie płaci. Wagi da się wyłączyć dopiero, gdy wszyscy zaznaczeni mają tę samą wagę (np. 1 1 1) - wtedy wyłączenie nie zmienia podziału.
 - Pozycja bez konsumentów **nie wchodzi** do rozliczenia (koszt zostaje u płacącego) - aplikacja wyraźnie ją oznacza.
 - Saldo = zapłacone − zużyte ± spłaty. Plus = dostaje pieniądze, minus = oddaje.
 - Przelewy: dłużnicy są parowani z wierzycielami tak, by przelewów było jak najmniej (maks. n−1).

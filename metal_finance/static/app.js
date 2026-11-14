@@ -4,6 +4,9 @@
   const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
   const root = document.querySelector('meta[name="script-root"]')?.content || "";
 
+  const LOCKED_TITLE = "Wagi zmieniają podział - ustaw wszystkim tę samą wagę, żeby je wyłączyć";
+  const WEIGHTED_TITLE = "Pokaż wagi przy osobach - koszt dzieli się proporcjonalnie do wag";
+
   function toast(msg) {
     const el = document.getElementById("mf-toast");
     if (!el || !window.bootstrap) { alert(msg); return; }
@@ -45,7 +48,10 @@
           tr.classList.toggle("weighted", row.weighted);
           tr.querySelectorAll(".js-weighted").forEach((b) => {
             b.classList.toggle("active", row.weighted);
+            b.classList.toggle("locked", Boolean(row.locked));
             b.setAttribute("aria-pressed", String(row.weighted));
+            b.setAttribute("aria-disabled", String(Boolean(row.locked)));
+            b.title = row.locked ? LOCKED_TITLE : WEIGHTED_TITLE;
           });
         }
         for (const [person, w] of Object.entries(row.weights || {})) {
@@ -146,6 +152,7 @@
     }
     const wbtn = e.target.closest(".js-weighted");
     if (wbtn) {
+      if (wbtn.classList.contains("locked")) { toast(LOCKED_TITLE + "."); return; }
       wbtn.disabled = true;
       try {
         apply(await api(`/api/products/${wbtn.dataset.product}`, { weighted: !wbtn.classList.contains("active") }));

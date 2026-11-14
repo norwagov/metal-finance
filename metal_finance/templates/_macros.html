@@ -51,8 +51,9 @@
     <div class="btn-group btn-group-sm">
       <button type="button" class="btn btn-outline-secondary" data-consumers-set="all" data-product="{{ prod.id }}" title="Wszyscy"><i class="bi bi-people-fill"></i></button>
       <button type="button" class="btn btn-outline-secondary" data-consumers-set="none" data-product="{{ prod.id }}" title="Nikt"><i class="bi bi-person-dash"></i></button>
-      <button type="button" class="btn btn-outline-secondary js-weighted {% if prod.weighted %}active{% endif %}" data-product="{{ prod.id }}"
-              aria-pressed="{{ 'true' if prod.weighted else 'false' }}" title="Pokaż wagi przy osobach - koszt dzieli się proporcjonalnie do wag"><i class="bi bi-sliders"></i></button>
+      <button type="button" class="btn btn-outline-secondary js-weighted {% if prod.weighted %}active{% endif %} {% if prod.weights_locked %}locked{% endif %}" data-product="{{ prod.id }}"
+              aria-pressed="{{ 'true' if prod.weighted else 'false' }}" aria-disabled="{{ 'true' if prod.weights_locked else 'false' }}"
+              title="{{ 'Wagi zmieniają podział - ustaw wszystkim tę samą wagę, żeby je wyłączyć' if prod.weights_locked else 'Pokaż wagi przy osobach - koszt dzieli się proporcjonalnie do wag' }}"><i class="bi bi-sliders"></i></button>
     </div>
     <form method="post" action="{{ url_for('bills.delete_product', product_id=prod.id) }}" class="d-inline" data-confirm="Usunąć pozycję „{{ prod.name }}”?">
       {{ csrf() }}<input type="hidden" name="back" value="{{ back }}">

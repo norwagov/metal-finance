@@ -276,7 +276,23 @@ def test_weights_api(app, client):
     html = client.get(f"/bills/{bill_id}").get_data(as_text=True)
     assert re.search(rf'data-product="{pid}" class="product-row[^"]*\bweighted\b', html)
 
+    # różne wagi -> nie da się wyłączyć
+    assert r["rows"][str(pid)]["locked"] is True
+    html = client.get(f"/bills/{bill_id}").get_data(as_text=True)
+    assert re.search(r'js-weighted[^"]*\blocked\b', html)
+    r = client.post(f"/api/products/{pid}", json={"weighted": False}, headers=tok)
+    assert r.status_code == 400 and "tę samą wagę" in r.get_json()["error"]
+
+    # waga 0 też zmienia podział
+    for i, w in ((0, "1"), (1, "0")):
+        r = client.post(f"/api/products/{pid}/weights", json={"person_id": ids[i], "weight": w}, headers=tok).get_json()
+    assert r["rows"][str(pid)]["locked"] is True
+
+    # 1 1 1 -> można wyłączyć
+    r = client.post(f"/api/products/{pid}/weights", json={"person_id": ids[1], "weight": "1"}, headers=tok).get_json()
+    assert r["rows"][str(pid)]["locked"] is False
     r = client.post(f"/api/products/{pid}", json={"weighted": False}, headers=tok).get_json()
+    assert r["ok"] and r["rows"][str(pid)]["weighted"] is False
     assert r["bind"][f"share:{pid}:{ids[0]}"] == "100,00"
 
 
