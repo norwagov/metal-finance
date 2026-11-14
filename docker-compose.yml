@@ -3,7 +3,7 @@
 #
 #  Do postawienia aplikacji wystarczy TEN JEDEN PLIK (kod pobiera się z repozytorium):
 #    1. skopiuj go na serwer do pustego katalogu jako docker-compose.yml
-#    2. podmień adres repozytorium w `context:` i uzupełnij zmienne poniżej
+#    2. uzupełnij zmienne poniżej (token Claude, hasło ekipy)
 #    3. docker compose up -d --build
 #  Aplikacja: http://<serwer>:8080
 #
@@ -12,8 +12,8 @@
 services:
   metal-finance:
     build:
-      # Repozytorium z kodem (#gałąź). Prywatne repo: https://<token>@github.com/<login>/<repo>.git#main
-      context: https://github.com/TWOJ-LOGIN/metal-finance.git#main
+      # Repozytorium z kodem (#gałąź)
+      context: https://github.com/norwagov/metal-finance.git#main
     image: metal-finance:latest
     container_name: metal-finance
     restart: unless-stopped

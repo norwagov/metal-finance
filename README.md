@@ -13,20 +13,24 @@ Aplikacja webowa (Flask) do rozliczania się ze znajomymi za wspólne wyjazdy i 
 
 Wymagany jest Docker z Compose v2 (BuildKit). Kod pobiera się z repozytorium jako kontekst budowania, więc na serwerze potrzebny jest tylko `docker-compose.yml`.
 
-1. Wypchnij ten kod do repozytorium Git (np. GitHub).
-2. Na serwerze utwórz pusty katalog i skopiuj do niego [`docker-compose.yml`](docker-compose.yml).
-3. W pliku ustaw:
-   - `context:` - adres repozytorium, np. `https://github.com/login/metal-finance.git#main`
-     (prywatne repo: `https://<token>@github.com/login/metal-finance.git#main`),
+1. Na serwerze utwórz pusty katalog i pobierz do niego [`docker-compose.yml`](docker-compose.yml):
+
+   ```bash
+   curl -fsSLO https://raw.githubusercontent.com/norwagov/metal-finance/main/docker-compose.yml
+   ```
+
+2. W pliku ustaw:
    - `CLAUDE_CODE_OAUTH_TOKEN` - token subskrypcji Claude (patrz niżej),
    - `APP_PASSWORD` - wspólne hasło ekipy (zalecane, jeśli aplikacja jest dostępna z internetu).
-4. Uruchom:
+
+   Kod budowany jest z `https://github.com/norwagov/metal-finance.git#main` (pole `context:`); fork wystarczy podmienić tam.
+3. Uruchom:
 
    ```bash
    docker compose up -d --build
    ```
 
-5. Otwórz `http://<serwer>:8080`.
+4. Otwórz `http://<serwer>:8080`.
 
 Aktualizacja do najnowszej wersji z repozytorium to to samo polecenie: `docker compose up -d --build`.
 Dane (baza SQLite i zdjęcia) leżą w wolumenie `metal-finance-data` i przetrwają aktualizacje.
