@@ -41,6 +41,18 @@
         tr.querySelectorAll("input.js-consumer").forEach((cb) => {
           cb.checked = row.consumers.includes(Number(cb.dataset.person));
         });
+        if ("weighted" in row) {
+          tr.classList.toggle("weighted", row.weighted);
+          tr.querySelectorAll(".js-weighted").forEach((b) => {
+            b.classList.toggle("active", row.weighted);
+            b.setAttribute("aria-pressed", String(row.weighted));
+          });
+        }
+        for (const [person, w] of Object.entries(row.weights || {})) {
+          tr.querySelectorAll(`input.js-weight[data-person="${person}"]`).forEach((inp) => {
+            if (document.activeElement !== inp) inp.value = w;
+          });
+        }
       });
     }
     document.querySelectorAll("[data-show-if-text]").forEach((box) => {
@@ -95,7 +107,34 @@
     }
   });
 
-  // --- przyciski "wszyscy" / "nikt" -------------------------------------------------------------
+  // --- wagi osób w pozycji --------------------------------------------------------------------
+  document.addEventListener("focusin", (e) => {
+    if (e.target.matches("input.js-weight")) { e.target.dataset.orig = e.target.value; e.target.select(); }
+  });
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if (!t.matches("input.js-weight")) return;
+    if (e.key === "Enter") { e.preventDefault(); t.blur(); }
+    if (e.key === "Escape") { t.value = t.dataset.orig ?? t.value; t.blur(); }
+  });
+  document.addEventListener("change", async (e) => {
+    const t = e.target;
+    if (!t.matches("input.js-weight")) return;
+    t.classList.remove("saved", "error");
+    try {
+      const data = await api(`/api/products/${t.dataset.product}/weights`, { person_id: Number(t.dataset.person), weight: t.value });
+      apply(data);
+      t.value = data.rows?.[t.dataset.product]?.weights?.[t.dataset.person] ?? t.value;
+      t.dataset.orig = t.value;
+      t.classList.add("saved");
+      setTimeout(() => t.classList.remove("saved"), 900);
+    } catch (err) {
+      t.classList.add("error");
+      toast(err.message);
+    }
+  });
+
+  // --- przyciski "wszyscy" / "nikt" / "wagi" ----------------------------------------------------
   document.addEventListener("click", async (e) => {
     const btn = e.target.closest("[data-consumers-set]");
     if (btn) {
@@ -103,6 +142,14 @@
       try {
         apply(await api(`/api/products/${btn.dataset.product}/consumers`, { set: btn.dataset.consumersSet }));
       } catch (err) { toast(err.message); } finally { btn.disabled = false; }
+      return;
+    }
+    const wbtn = e.target.closest(".js-weighted");
+    if (wbtn) {
+      wbtn.disabled = true;
+      try {
+        apply(await api(`/api/products/${wbtn.dataset.product}`, { weighted: !wbtn.classList.contains("active") }));
+      } catch (err) { toast(err.message); } finally { wbtn.disabled = false; }
       return;
     }
     const copy = e.target.closest("[data-copy]");

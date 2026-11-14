@@ -9,7 +9,7 @@ from datetime import timedelta
 
 from flask import Flask, abort, redirect, request, session, url_for
 
-from .models import db, seed_defaults
+from .models import db, seed_defaults, upgrade_schema
 from .money import CURRENCY_SYMBOLS, fmt_amount, fmt_input, fmt_qty
 
 __version__ = "1.0.0"
@@ -62,6 +62,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     db.init_app(app)
     with app.app_context():
         db.create_all()
+        upgrade_schema()
         seed_defaults()
 
     app.jinja_env.filters["money"] = fmt_amount

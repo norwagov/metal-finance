@@ -224,3 +224,71 @@ def test_scrub_env(monkeypatch):
     receipt_ai._scrub_env()
     import os
     assert "ANTHROPIC_API_KEY" not in os.environ
+
+
+# --- wagi osób w pozycji ----------------------------------------------------------------------
+
+def test_weighted_shares(app):
+    with app.app_context():
+        t, a, b, c = make_trip()
+        prod = next(p for bl in t.bills for p in bl.products if p.name == "Pb95")
+        prod.weighted = True
+        prod.set_weight(a.id, 2)
+        prod.set_weight(b.id, 1.5)
+        db.session.commit()
+        from metal_finance.settlement import product_shares
+        sh = product_shares(prod)  # 300 zł w proporcji 2 : 1,5 : 1
+        assert sh == {a.id: Fraction(40000, 3), b.id: Fraction(10000), c.id: Fraction(20000, 3)}
+        s = summarize(t)
+        assert sum(r.balance for r in s.people) == 0
+        # wyłączenie wag wraca do podziału po równo, wagi zostają zapamiętane
+        prod.weighted = False
+        assert set(product_shares(prod).values()) == {Fraction(10000)}
+        assert prod.weight_of(a.id) == 2
+        # same zera -> po równo
+        prod.weighted = True
+        for p in (a, b, c):
+            prod.set_weight(p.id, 0)
+        assert set(product_shares(prod).values()) == {Fraction(10000)}
+
+
+def test_weights_api(app, client):
+    with app.app_context():
+        t, a, b, c = make_trip()
+        prod = next(p for bl in t.bills for p in bl.products if p.name == "Pb95")
+        pid, ids, bill_id = prod.id, (a.id, b.id, c.id), prod.bill_id
+    tok = {"X-CSRF-Token": csrf(client)}
+    html = client.get(f"/bills/{bill_id}").get_data(as_text=True)
+    assert "js-weighted" in html and "js-weight" in html
+
+    r = client.post(f"/api/products/{pid}", json={"weighted": True}, headers=tok).get_json()
+    assert r["rows"][str(pid)]["weighted"] is True
+    r = client.post(f"/api/products/{pid}/weights", json={"person_id": ids[0], "weight": "2"}, headers=tok).get_json()
+    assert r["ok"] and r["rows"][str(pid)]["weights"][str(ids[0])] == "2"
+    assert r["bind"][f"share:{pid}:{ids[0]}"] == "150,00"
+    assert r["bind"][f"share:{pid}:{ids[1]}"] == "75,00"
+    r = client.post(f"/api/products/{pid}/weights", json={"person_id": ids[1], "weight": "0,5"}, headers=tok).get_json()
+    assert r["rows"][str(pid)]["weights"][str(ids[1])] == "0,5"
+
+    assert client.post(f"/api/products/{pid}/weights", json={"person_id": ids[0], "weight": "abc"}, headers=tok).status_code == 400
+    assert client.post(f"/api/products/{pid}/weights", json={"person_id": ids[0], "weight": "-1"}, headers=tok).status_code == 400
+    assert client.post(f"/api/products/{pid}/weights", json={"person_id": 9999, "weight": "1"}, headers=tok).status_code == 400
+    html = client.get(f"/bills/{bill_id}").get_data(as_text=True)
+    assert re.search(rf'data-product="{pid}" class="product-row[^"]*\bweighted\b', html)
+
+    r = client.post(f"/api/products/{pid}", json={"weighted": False}, headers=tok).get_json()
+    assert r["bind"][f"share:{pid}:{ids[0]}"] == "100,00"
+
+
+def test_upgrade_schema_adds_column(tmp_path, monkeypatch):
+    import sqlite3
+    dbfile = tmp_path / "old.db"
+    con = sqlite3.connect(dbfile)
+    con.execute("CREATE TABLE product (id INTEGER PRIMARY KEY, bill_id INTEGER NOT NULL, name VARCHAR(200) NOT NULL,"
+                " quantity FLOAT NOT NULL, price INTEGER NOT NULL, position INTEGER NOT NULL)")
+    con.commit()
+    con.close()
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    create_app({"TESTING": True, "DATA_DIR": str(tmp_path), "SQLALCHEMY_DATABASE_URI": f"sqlite:///{dbfile}"})
+    cols = [r[1] for r in sqlite3.connect(dbfile).execute("PRAGMA table_info(product)")]
+    assert "weighted" in cols

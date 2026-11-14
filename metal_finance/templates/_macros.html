@@ -27,7 +27,7 @@
 #}
 {% macro product_row(prod, trip, product_shares, back='bill', indent=False) -%}
 {% set shares = product_shares(prod) %}
-<tr data-product="{{ prod.id }}" class="product-row {% if not prod.consumers %}unassigned{% endif %}">
+<tr data-product="{{ prod.id }}" class="product-row {% if not prod.consumers %}unassigned{% endif %} {% if prod.weighted %}weighted{% endif %}">
   <td class="cell-name {% if indent %}ps-4{% endif %}">
     <input class="cell-input js-field" data-product="{{ prod.id }}" data-field="name" value="{{ prod.name }}" aria-label="Nazwa pozycji">
   </td>
@@ -44,12 +44,15 @@
       <span class="tick"><i class="bi bi-check-lg"></i></span>
     </label>
     <span class="share" data-bind="share:{{ prod.id }}:{{ p.id }}">{{ shares[p.id]|money if p.id in shares else '' }}</span>
+    <label class="weight" title="Waga: {{ p.name }}"><span aria-hidden="true">×</span><input class="js-weight" data-product="{{ prod.id }}" data-person="{{ p.id }}" value="{{ prod.weight_of(p.id)|qty }}" inputmode="decimal" aria-label="Waga {{ p.name }} - {{ prod.name }}"></label>
   </td>
   {% endfor %}
   <td class="cell-actions text-nowrap">
     <div class="btn-group btn-group-sm">
       <button type="button" class="btn btn-outline-secondary" data-consumers-set="all" data-product="{{ prod.id }}" title="Wszyscy"><i class="bi bi-people-fill"></i></button>
       <button type="button" class="btn btn-outline-secondary" data-consumers-set="none" data-product="{{ prod.id }}" title="Nikt"><i class="bi bi-person-dash"></i></button>
+      <button type="button" class="btn btn-outline-secondary js-weighted {% if prod.weighted %}active{% endif %}" data-product="{{ prod.id }}"
+              aria-pressed="{{ 'true' if prod.weighted else 'false' }}" title="Pokaż wagi przy osobach - koszt dzieli się proporcjonalnie do wag"><i class="bi bi-sliders"></i></button>
     </div>
     <form method="post" action="{{ url_for('bills.delete_product', product_id=prod.id) }}" class="d-inline" data-confirm="Usunąć pozycję „{{ prod.name }}”?">
       {{ csrf() }}<input type="hidden" name="back" value="{{ back }}">

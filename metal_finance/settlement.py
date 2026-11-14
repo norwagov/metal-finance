@@ -3,6 +3,7 @@
 Zasady:
 * płatnik rachunku "zapłacił" sumę wszystkich jego pozycji, które mają konsumentów,
 * koszt pozycji dzielimy po równo między jej konsumentów (dokładnie, na ułamkach),
+  a gdy pozycja ma włączone wagi - proporcjonalnie do wag konsumentów,
 * pozycja bez konsumentów nie wchodzi do rozliczenia (koszt zostaje u płacącego),
 * spłata A -> B zwiększa saldo A i zmniejsza saldo B,
 * saldo > 0 oznacza, że osoba powinna dostać pieniądze.
@@ -57,6 +58,11 @@ def product_shares(product) -> dict[int, Fraction]:
     cons = product.consumers
     if not cons:
         return {}
+    if getattr(product, "weighted", False):
+        weights = {c.id: Fraction(str(product.weight_of(c.id))) for c in cons}
+        total = sum(weights.values())
+        if total > 0:
+            return {pid: Fraction(product.price) * w / total for pid, w in weights.items()}
     share = Fraction(product.price, len(cons))
     return {c.id: share for c in cons}
 
