@@ -10,7 +10,7 @@ from datetime import timedelta
 from flask import Flask, abort, redirect, request, session, url_for
 
 from .models import db, seed_defaults, upgrade_schema
-from .money import CURRENCY_SYMBOLS, fmt_amount, fmt_input, fmt_qty
+from .money import currency_symbol, fmt_amount, fmt_input, fmt_qty, fmt_rate
 
 __version__ = "1.0.0"
 
@@ -68,6 +68,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.jinja_env.filters["money"] = fmt_amount
     app.jinja_env.filters["money_input"] = fmt_input
     app.jinja_env.filters["qty"] = fmt_qty
+    app.jinja_env.filters["rate"] = fmt_rate
 
     @app.template_filter("pldate")
     def pldate(d):
@@ -77,7 +78,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     def inject():
         return {
             "csrf_token": _csrf_token,
-            "currency_symbol": lambda c: CURRENCY_SYMBOLS.get(c, c),
+            "currency_symbol": currency_symbol,
             "app_version": __version__,
             "auth_enabled": bool(app.config["APP_PASSWORD"]),
         }

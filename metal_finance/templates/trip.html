@@ -65,7 +65,8 @@
           </div>
         </div>
         <div class="text-end ms-2">
-          <div class="fw-semibold money">{{ b.total|money(trip.currency) }}</div>
+          <div class="fw-semibold money">{{ b.total|money(b.currency) }}</div>
+          {% if b.is_foreign %}<div class="small money {{ 'text-danger' if b.missing_rate else 'text-secondary' }}">{{ ('≈ ' ~ b.total_converted|money(trip.currency)) if not b.missing_rate else 'brak kursu' }}</div>{% endif %}
           {{ m.avatar(b.payer, 'avatar-xs') }}
         </div>
       </a>

@@ -5,6 +5,7 @@ Aplikacja webowa (Flask) do rozliczania się ze znajomymi za wspólne wyjazdy i 
 - **Wyjazd / rozliczenie** → składa się z **rachunków** → rachunek składa się z **pozycji (produktów)**.
 - Każdy rachunek ma **płatnika**, każda pozycja ma **konsumentów** - koszt pozycji dzieli się po równo między nich.
 - **Tabela** w stylu Excela: wiersze = pozycje, kolumny = osoby; klikasz, kto z czego korzystał, a sumy i salda przeliczają się od razu.
+- **Waluty**: każdy rachunek może być w innej walucie (EUR, CZK, HUF…). Przy zdjęciu walutę rozpoznaje Claude, a kwoty przeliczamy na walutę wyjazdu po kursie NBP z dnia rachunku.
 - **Kategorie** rachunków (paliwo, jedzenie, nocleg…) - własne, z ikoną i kolorem.
 - Rachunki dodajesz **ręcznie** albo **zdjęciem paragonu** - pozycje odczytuje **Claude w ramach subskrypcji Pro/Max** (nie płatne API pay-as-you-go). Zdjęcia zostają przy rachunku.
 - **Rozliczenie**: salda, minimalna lista przelewów „kto komu ile”, zapis spłat, podział wydatków na kategorie, tekst do wklejenia na grupę, eksport CSV do Excela.
@@ -66,6 +67,7 @@ Bez tokenu aplikacja działa normalnie - zdjęcie zapisze się przy rachunku, a 
 | `MAX_UPLOAD_MB` | `60` | maks. rozmiar wysyłanych zdjęć na raz |
 | `SECRET_KEY` | losowy | klucz sesji; domyślnie generowany i zapisywany w `/data/secret_key` |
 | `DATA_DIR` | `/data` | katalog na bazę i zdjęcia |
+| `FX_TIMEOUT` | `8` | limit czasu pobierania kursu walut (sekundy) |
 
 ## Jak liczone jest rozliczenie
 
@@ -76,7 +78,10 @@ Bez tokenu aplikacja działa normalnie - zdjęcie zapisze się przy rachunku, a 
 - Saldo = zapłacone − zużyte ± spłaty. Plus = dostaje pieniądze, minus = oddaje.
 - Przelewy: dłużnicy są parowani z wierzycielami tak, by przelewów było jak najmniej (maks. n−1).
 - Rabaty z paragonu Claude odejmuje od pozycji, której dotyczą. Jeśli suma pozycji różni się od sumy z paragonu, rachunek dostaje ostrzeżenie.
-- Kwoty w walucie wyjazdu; paragon w innej walucie jest oznaczany, ale nie przeliczany.
+- Rachunek ma własną walutę - pozycje i sumy rachunku są w niej, a salda, przelewy i spłaty w walucie wyjazdu. Przy odczycie zdjęcia walutę rozpoznaje Claude (symbole, adres, język, NIP/DIČ…), chyba że wybierzesz ją sam.
+- Kurs: średni kurs **NBP** (api.nbp.pl, tabela A, a dla rzadszych walut tabela B) z dnia rachunku lub ostatniego wcześniejszego notowania; pary bez PLN (np. CZK → EUR) liczone krzyżowo. Gdy NBP nie odpowiada - kurs EBC z api.frankfurter.dev. Oba API są darmowe i bez kluczy.
+- Kurs zapisuje się przy rachunku (zmiana daty lub waluty pobiera go na nowo). Można wpisać kurs ręcznie (np. z wyciągu karty) albo pobrać go ponownie przyciskiem obok pola. Rachunek w obcej walucie bez kursu nie wchodzi do rozliczenia i jest wyraźnie oznaczony.
+- Zmiana waluty wyjazdu: rachunki w dotychczasowej walucie wyjazdu przechodzą na nową (jak poprawka pomyłki), a kursy pozostałych pobierają się na nowo.
 
 ## Kopia zapasowa
 

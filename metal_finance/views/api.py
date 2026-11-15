@@ -27,18 +27,22 @@ def _state(prod: Product) -> dict:
     bind: dict[str, str] = {}
     tone: dict[str, str] = {}
 
+    bcur = bill.currency  # pozycje i sumy rachunku - w walucie rachunku; salda - w walucie wyjazdu
     shares = product_shares(prod)
     for p in trip.participants:
         bind[f"share:{prod.id}:{p.id}"] = fmt_amount(shares[p.id]) if p.id in shares else ""
-    bind[f"price:{prod.id}"] = fmt_amount(prod.price, cur)
+    bind[f"price:{prod.id}"] = fmt_amount(prod.price, bcur)
 
     bshares = bill_shares(bill)
-    bind[f"bill-total:{bill.id}"] = fmt_amount(bill.total, cur)
+    bind[f"bill-total:{bill.id}"] = fmt_amount(bill.total, bcur)
+    if bill.is_foreign:
+        converted = bill.total_converted
+        bind[f"bill-converted:{bill.id}"] = f"≈ {fmt_amount(converted, cur)}" if converted is not None else "brak kursu"
     for p in trip.participants:
-        bind[f"bill-share:{bill.id}:{p.id}"] = fmt_amount(bshares[p.id], cur) if p.id in bshares else "—"
+        bind[f"bill-share:{bill.id}:{p.id}"] = fmt_amount(bshares[p.id], bcur) if p.id in bshares else "—"
     mismatch = bill.total_mismatch
     bind[f"bill-mismatch:{bill.id}"] = (
-        f"Suma pozycji różni się od paragonu o {fmt_amount(mismatch, cur, sign=True)}" if mismatch else ""
+        f"Suma pozycji różni się od paragonu o {fmt_amount(mismatch, bcur, sign=True)}" if mismatch else ""
     )
 
     for r in summary.people:

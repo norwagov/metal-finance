@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import hashlib
 from datetime import date, datetime, timezone
+from decimal import Decimal
+from fractions import Fraction
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
+
+from .money import round_cents
 
 db = SQLAlchemy()
 
@@ -91,7 +95,12 @@ class Trip(db.Model):
 
     @property
     def total(self) -> int:
-        return sum(b.total for b in self.bills)
+        """Suma rachunków w walucie wyjazdu (rachunki bez kursu pomijamy)."""
+        return round_cents(sum((b.total_converted for b in self.bills if b.total_converted is not None), Fraction(0)))
+
+    @property
+    def missing_rate_bills(self) -> list:
+        return [b for b in self.bills if b.missing_rate]
 
 
 class Bill(db.Model):
@@ -105,6 +114,11 @@ class Bill(db.Model):
     declared_total = db.Column(db.Integer)  # suma z paragonu (wg AI lub wpisana) do kontroli
     source = db.Column(db.String(10), default="manual")  # manual | ai
     created_at = db.Column(db.DateTime, default=_utcnow)
+    # Kwoty pozycji są w walucie rachunku; do rozliczenia przeliczamy je kursem na walutę wyjazdu.
+    currency = db.Column(db.String(3), nullable=False, default="PLN", server_default="PLN")
+    exchange_rate = db.Column(db.String(24))  # 1 jednostka waluty rachunku = X waluty wyjazdu (Decimal jako tekst)
+    rate_date = db.Column(db.Date)  # data notowania kursu
+    rate_source = db.Column(db.String(10))  # NBP | EBC | manual
 
     trip = db.relationship("Trip", back_populates="bills")
     category = db.relationship("Category")
@@ -118,9 +132,56 @@ class Bill(db.Model):
         order_by="Attachment.id",
     )
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not kwargs.get("currency") and self.trip is not None:
+            self.currency = self.trip.currency
+
     @property
     def total(self) -> int:
+        """Suma pozycji w walucie rachunku."""
         return sum(p.price for p in self.products)
+
+    @property
+    def trip_currency(self) -> str:
+        return self.trip.currency if self.trip else self.currency
+
+    @property
+    def is_foreign(self) -> bool:
+        return bool(self.currency) and self.currency != self.trip_currency
+
+    @property
+    def rate_value(self) -> Decimal | None:
+        if not self.is_foreign:
+            return Decimal(1)
+        return Decimal(self.exchange_rate) if self.exchange_rate else None
+
+    @property
+    def rate(self) -> Fraction | None:
+        """Kurs do przeliczeń (dokładny ułamek); None = rachunek w obcej walucie bez kursu."""
+        value = self.rate_value
+        return Fraction(value) if value is not None else None
+
+    @property
+    def missing_rate(self) -> bool:
+        return self.rate is None
+
+    def set_rate(self, value: Decimal | None, day: date | None = None, source: str | None = None) -> None:
+        if value is None or not self.is_foreign:
+            self.exchange_rate, self.rate_date, self.rate_source = None, None, None
+            return
+        self.exchange_rate = format(Decimal(value).normalize(), "f")
+        self.rate_date = day
+        self.rate_source = source
+
+    def convert(self, cents) -> Fraction | None:
+        """Kwota w walucie rachunku -> dokładna kwota w walucie wyjazdu."""
+        rate = self.rate
+        return None if rate is None else Fraction(cents) * rate
+
+    @property
+    def total_converted(self) -> Fraction | None:
+        return self.convert(self.total)
 
     @property
     def unassigned_count(self) -> int:
@@ -216,9 +277,27 @@ DEFAULT_CATEGORIES = [
 def upgrade_schema() -> None:
     """Dokłada kolumny dodane po pierwszym wydaniu (create_all nie zmienia istniejących tabel)."""
     insp = db.inspect(db.engine)
-    if "weighted" not in {c["name"] for c in insp.get_columns("product")}:
-        with db.engine.begin() as conn:
-            conn.execute(db.text("ALTER TABLE product ADD COLUMN weighted BOOLEAN NOT NULL DEFAULT 0"))
+    added = {
+        "product": [("weighted", "BOOLEAN NOT NULL DEFAULT 0")],
+        "bill": [
+            ("currency", "VARCHAR(3) NOT NULL DEFAULT 'PLN'"),
+            ("exchange_rate", "VARCHAR(24)"),
+            ("rate_date", "DATE"),
+            ("rate_source", "VARCHAR(10)"),
+        ],
+    }
+    for table, columns in added.items():
+        have = {c["name"] for c in insp.get_columns(table)}
+        for name, ddl in columns:
+            if name in have:
+                continue
+            with db.engine.begin() as conn:
+                conn.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+                if (table, name) == ("bill", "currency"):
+                    # dotychczasowe rachunki były zawsze w walucie wyjazdu
+                    conn.execute(db.text(
+                        "UPDATE bill SET currency = (SELECT trip.currency FROM trip WHERE trip.id = bill.trip_id)"
+                    ))
 
 
 def seed_defaults() -> None:

@@ -60,11 +60,26 @@
             <input class="form-control" type="date" id="date" name="date" value="{{ form.get('date', '' if mode == 'ai' else today.isoformat()) }}">
             {% if mode == 'ai' %}<div class="form-text">puste = z paragonu</div>{% endif %}
           </div>
+          {% set chosen_currency = form.get('currency', '' if mode == 'ai' else trip.currency) %}
           {% if mode == 'manual' %}
           <div class="col-12 col-md-4">
-            <label class="form-label" for="amount">Kwota ({{ currency_symbol(trip.currency) }})</label>
-            <input class="form-control money" id="amount" name="amount" inputmode="decimal" value="{{ form.get('amount', '') }}" placeholder="0,00">
-            <div class="form-text">puste = dodasz pozycje osobno</div>
+            <label class="form-label" for="amount">Kwota</label>
+            <div class="input-group">
+              <input class="form-control money" id="amount" name="amount" inputmode="decimal" value="{{ form.get('amount', '') }}" placeholder="0,00">
+              <select class="form-select flex-grow-0 w-auto" name="currency" aria-label="Waluta">
+                {% for c in currencies %}<option value="{{ c }}" {% if chosen_currency == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="form-text">puste = dodasz pozycje osobno · obcą walutę przeliczymy po kursie NBP</div>
+          </div>
+          {% else %}
+          <div class="col-12 col-md-4">
+            <label class="form-label" for="currency">Waluta</label>
+            <select class="form-select" id="currency" name="currency">
+              <option value="" {% if not chosen_currency %}selected{% endif %}>— Claude rozpozna —</option>
+              {% for c in currencies %}<option value="{{ c }}" {% if chosen_currency == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+            </select>
+            <div class="form-text">obcą przeliczymy na {{ trip.currency }} po kursie NBP</div>
           </div>
           {% endif %}
         </div>

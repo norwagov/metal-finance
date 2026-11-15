@@ -27,7 +27,7 @@ from claude_agent_sdk import (
     TextBlock,
 )
 
-from .money import parse_money, parse_quantity
+from .money import normalize_currency, parse_money, parse_quantity
 
 log = logging.getLogger(__name__)
 
@@ -66,8 +66,9 @@ def is_configured() -> bool:
 
 SYSTEM_PROMPT = (
     "You are a meticulous receipt and invoice parser for a cost-splitting app used by a group of "
-    "friends. Documents are mostly Polish: paragony fiskalne, faktury, restaurant bills, fuel "
-    "station, supermarket and hotel receipts. You receive one or more photos of the SAME document "
+    "friends. Documents are mostly Polish (paragony fiskalne, faktury, restaurant bills, fuel "
+    "station, supermarket and hotel receipts), but the group also travels abroad, so receipts may be "
+    "in any language and currency. You receive one or more photos of the SAME document "
     "(a long receipt may be photographed in parts - do not double count overlapping lines). "
     "You read carefully, never invent lines that are not printed, and return the result through "
     "the structured output."
@@ -78,7 +79,10 @@ RECEIPT_SCHEMA = {
     "properties": {
         "merchant": {"type": "string", "description": "Short store / venue name"},
         "date": {"type": ["string", "null"], "description": "Purchase date YYYY-MM-DD"},
-        "currency": {"type": ["string", "null"], "description": "ISO 4217 code, e.g. PLN"},
+        "currency": {
+            "type": ["string", "null"],
+            "description": "ISO 4217 code of the currency the amounts are printed in, e.g. PLN, EUR, CZK",
+        },
         "total": {"type": ["number", "null"], "description": "Final amount to pay"},
         "category": {"type": ["string", "null"]},
         "items": {
@@ -104,7 +108,7 @@ def _receipt_prompt(categories: list[str], currency: str) -> str:
     return f"""Read the document in the attached photo(s) and return:
 - merchant: short store/venue name as printed (e.g. "Biedronka", "Orlen", "Pizzeria Roma"), at most ~40 characters.
 - date: purchase date as YYYY-MM-DD, or null if not legible.
-- currency: ISO code of the document currency ("zł" means PLN).
+- currency: ISO 4217 code of the currency the amounts on the document are printed in. Work it out from the document itself: currency symbols or codes next to amounts ("zł"/"PLN" = PLN, "€" = EUR, "Kč" = CZK, "Ft" = HUF, "£" = GBP, "kr" = NOK/SEK/DKK/ISK depending on the country), the merchant's address and country, the language, VAT/tax ID format (NIP = Poland, DIČ = Czechia, USt-IdNr. = Germany, ...). Pick the currency actually charged; if the document shows amounts in two currencies, use the one the total was paid in. Return null only if there is truly no hint.
 - total: the final amount to pay printed on the document (SUMA / DO ZAPŁATY / RAZEM / TOTAL), or null.
 - category: the best matching name from this list, copied exactly, or null: {cats}
 - items: every purchased line, in printed order, each with:
@@ -120,7 +124,7 @@ Rules:
 - If the image is not a receipt/invoice or is unreadable, return an empty items list and explain why in `notes`.
 - notes: short remarks for the user written in Polish, or null.
 
-The group's default currency is {currency}."""
+The group's settlement currency is {currency} - use it only as a last resort when the document gives no hint at all; never convert amounts, always return them exactly as printed."""
 
 
 def parse_receipt(image_paths: list[str], categories: list[str], currency: str = "PLN") -> dict:
@@ -279,7 +283,7 @@ def normalize(data: dict) -> dict:
             qty = 1.0
         name = " ".join(str(it.get("name") or "").split())[:200] or "Pozycja"
         items.append({"name": name, "quantity": qty, "price": price})
-    currency = str(data.get("currency") or "").strip().upper()[:3] or None
+    currency = normalize_currency(data.get("currency"))
     return {
         "merchant": " ".join(str(data.get("merchant") or "").split())[:200],
         "date": _parse_date(data.get("date")),

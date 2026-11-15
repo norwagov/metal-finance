@@ -30,6 +30,14 @@
   <li class="nav-item"><a class="nav-link {% if tab == 'settle' %}active{% endif %}" href="{{ url_for('trips.settle', trip_id=trip.id) }}"><i class="bi bi-arrow-left-right"></i> Rozliczenie</a></li>
 </ul>
 
+{% if summary.missing_rate %}
+<div class="alert alert-danger py-2 small">
+  <i class="bi bi-currency-exchange"></i>
+  {{ summary.missing_rate|length }} rach. w obcej walucie nie ma kursu - nie są liczone w rozliczeniu:
+  {% for b in summary.missing_rate %}<a href="{{ url_for('bills.show', bill_id=b.id) }}" class="alert-link">{{ b.title }} ({{ b.currency }})</a>{{ ', ' if not loop.last }}{% endfor %}.
+  Wpisz kurs ręcznie albo pobierz go ponownie na stronie rachunku.
+</div>
+{% endif %}
 {% if summary.unassigned %}
 <div class="alert alert-warning py-2 small">
   <i class="bi bi-exclamation-triangle"></i>

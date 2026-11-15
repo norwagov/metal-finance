@@ -4,8 +4,33 @@ from __future__ import annotations
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from fractions import Fraction
 
-CURRENCY_SYMBOLS = {"PLN": "zł", "EUR": "€", "USD": "$", "GBP": "£", "CZK": "Kč", "CHF": "CHF"}
-CURRENCIES = ["PLN", "EUR", "USD", "GBP", "CZK", "CHF", "HUF", "NOK", "SEK", "DKK"]
+CURRENCY_SYMBOLS = {
+    "PLN": "zł", "EUR": "€", "USD": "$", "GBP": "£", "CZK": "Kč", "CHF": "CHF", "HUF": "Ft",
+    "UAH": "₴", "JPY": "¥", "TRY": "₺",
+    "RON": "lei", "BGN": "лв", "RSD": "din", "GEL": "₾", "ILS": "₪", "INR": "₹", "THB": "฿",
+}
+# waluty na liście wyboru; każdy inny 3-literowy kod ISO też jest akceptowany (jeśli NBP/EBC ma kurs)
+CURRENCIES = [
+    "PLN", "EUR", "USD", "GBP", "CZK", "CHF", "HUF", "NOK", "SEK", "DKK", "ISK", "UAH", "RON",
+    "BGN", "RSD", "TRY", "GEL", "ALL", "BAM", "MKD", "MAD", "EGP", "AED", "ILS", "JPY", "CNY",
+    "THB", "VND", "IDR", "INR", "AUD", "NZD", "CAD", "MXN", "BRL", "ZAR",
+]
+# zapisy waluty spotykane na paragonach -> kod ISO
+_CURRENCY_ALIASES = {"ZŁ": "PLN", "ZL": "PLN", "€": "EUR", "$": "USD", "£": "GBP", "KČ": "CZK", "FT": "HUF"}
+
+
+def normalize_currency(value) -> str | None:
+    """'eur' / 'zł' / '€' -> 'EUR' / 'PLN'; nierozpoznane -> None."""
+    s = str(value or "").strip().upper()
+    s = _CURRENCY_ALIASES.get(s, s)
+    return s if len(s) == 3 and s.isascii() and s.isalpha() else None
+
+
+def currency_symbol(code: str | None) -> str:
+    return CURRENCY_SYMBOLS.get(code, code) if code else ""
+
+
+_JUNK = sorted({*CURRENCY_SYMBOLS.values(), *CURRENCIES, "zl", "kr"}, key=len, reverse=True)
 
 
 def parse_money(value) -> int | None:
@@ -18,8 +43,9 @@ def parse_money(value) -> int | None:
         d = Decimal(str(value))
     else:
         s = str(value).strip()
-        for junk in (" ", " ", "zł", "zl", "PLN", "€", "$", "EUR"):
-            s = s.replace(junk, "")
+        s = s.replace(" ", "").replace("\u00a0", "").replace("\u202f", "")
+        for junk in _JUNK:
+            s = s.replace(junk, "").replace(junk.lower(), "")
         if not s:
             return None
         if "," in s and "." in s:
@@ -103,3 +129,26 @@ def fmt_qty(q: float | None) -> str:
     if float(q).is_integer():
         return str(int(q))
     return f"{q:.3f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def fmt_rate(rate) -> str:
+    """Kurs do wyświetlenia: Decimal('4.389500') -> '4,3895'."""
+    if rate is None:
+        return ""
+    s = f"{Decimal(str(rate)):f}"
+    if "." in s:
+        s = s.rstrip("0").rstrip(".")
+    return s.replace(".", ",")
+
+
+def parse_rate(value) -> Decimal | None:
+    """'4,3895' -> Decimal('4.3895'); puste -> None; ujemne/zero -> ValueError."""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        d = Decimal(str(value).strip().replace(" ", "").replace(",", "."))
+    except InvalidOperation as exc:
+        raise ValueError(f"Niepoprawny kurs: {value!r}") from exc
+    if not d.is_finite() or d <= 0:
+        raise ValueError("Kurs musi być liczbą większą od zera.")
+    return d.quantize(Decimal("1e-10"), rounding=ROUND_HALF_UP).normalize()

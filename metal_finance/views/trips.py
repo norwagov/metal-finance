@@ -8,9 +8,9 @@ from flask import Blueprint, Response, flash, redirect, render_template, request
 
 from .. import receipt_ai
 from ..models import Payment, Person, Trip, db
-from ..money import CURRENCIES, fmt_amount, fmt_input, fmt_qty, parse_money, round_cents
+from ..money import CURRENCIES, fmt_amount, fmt_input, fmt_qty, fmt_rate, normalize_currency, parse_money, round_cents
 from ..settlement import bill_shares, product_shares, summarize
-from . import clean, find_or_create_people, int_or_none, parse_date, remove_files
+from . import clean, find_or_create_people, int_or_none, parse_date, remove_files, update_rate
 
 bp = Blueprint("trips", __name__)
 
@@ -31,14 +31,27 @@ def _trip_form_people() -> list[Person]:
     return sorted(people, key=lambda p: p.name.casefold())
 
 
+def _change_currency(trip: Trip, old: str) -> None:
+    """Po zmianie waluty wyjazdu: rachunki w starej walucie wyjazdu przechodzą na nową (jak dotąd -
+    to zwykle poprawka pomyłki), a kursy pozostałych pobieramy na nowo, bo były liczone wobec starej."""
+    problems = 0
+    for b in trip.bills:
+        if b.currency == old:
+            b.currency = trip.currency
+        b.set_rate(None)
+        if b.is_foreign:
+            problems += any(level != "info" for level, _ in update_rate(b))
+    if problems:
+        flash(f"Nie udało się pobrać kursu dla {problems} rach. - wpisz go ręcznie na stronie rachunku.", "warning")
+
+
 def _fill_trip(trip: Trip) -> str | None:
     name = clean(request.form.get("name"), 120)
     if not name:
         return "Podaj nazwę wyjazdu."
     trip.name = name
     trip.description = (request.form.get("description") or "").strip()
-    cur = (request.form.get("currency") or "PLN").upper()[:3]
-    trip.currency = cur if cur.isalpha() else "PLN"
+    trip.currency = normalize_currency(request.form.get("currency")) or trip.currency or "PLN"
     trip.start_date = parse_date(request.form.get("start_date"))
     trip.end_date = parse_date(request.form.get("end_date"))
     return None
@@ -71,6 +84,7 @@ def new():
 def edit(trip_id: int):
     trip = db.get_or_404(Trip, trip_id)
     if request.method == "POST":
+        old_currency = trip.currency
         error = _fill_trip(trip)
         people = _trip_form_people()
         if error or not people:
@@ -98,6 +112,8 @@ def edit(trip_id: int):
                 if removed:
                     flash(f"Usunięto {p.name} z {removed} poz.", "info")
         trip.participants = sorted(people + kept, key=lambda x: x.name.casefold())
+        if trip.currency != old_currency:
+            _change_currency(trip, old_currency)
         db.session.commit()
         flash("Zapisano zmiany.", "success")
         return redirect(url_for("trips.show", trip_id=trip.id))
@@ -192,20 +208,26 @@ def export_csv(trip_id: int):
     people = trip.participants
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";")
-    w.writerow(["Data", "Rachunek", "Kategoria", "Płacił", "Pozycja", "Ilość", "Kwota"] + [p.name for p in people])
+    cur = trip.currency
+    head = ["Data", "Rachunek", "Kategoria", "Płacił", "Pozycja", "Ilość", "Kwota", "Waluta", "Kurs", f"Kwota {cur}"]
+    w.writerow(head + [f"{p.name} ({cur})" for p in people])
+    pad = [""] * (len(head) - 5)
     for bill in sorted(trip.bills, key=lambda b: (b.date or date.min, b.id)):
+        rate = bill.rate
         for prod in bill.products:
             shares = product_shares(prod)
             w.writerow([
                 bill.date.isoformat() if bill.date else "", bill.title,
                 bill.category.name if bill.category else "", bill.payer.name, prod.name,
-                fmt_qty(prod.quantity), fmt_input(prod.price),
-            ] + [fmt_input(round_cents(shares[p.id])) if p.id in shares else "" for p in people])
+                fmt_qty(prod.quantity), fmt_input(prod.price), bill.currency,
+                fmt_rate(bill.rate_value) if rate is not None else "brak",
+                fmt_input(round_cents(prod.price * rate)) if rate is not None else "",
+            ] + [fmt_input(round_cents(shares[p.id] * rate)) if p.id in shares and rate is not None else "" for p in people])
     summary = summarize(trip)
     w.writerow([])
-    w.writerow(["", "", "", "", "Zapłacił", "", ""] + [fmt_input(summary.row(p.id).paid) for p in people])
-    w.writerow(["", "", "", "", "Skonsumował", "", ""] + [fmt_input(summary.row(p.id).consumed_cents) for p in people])
-    w.writerow(["", "", "", "", "Saldo", "", ""] + [fmt_input(summary.row(p.id).balance) for p in people])
+    w.writerow(["", "", "", "", "Zapłacił", *pad] + [fmt_input(summary.row(p.id).paid) for p in people])
+    w.writerow(["", "", "", "", "Skonsumował", *pad] + [fmt_input(summary.row(p.id).consumed_cents) for p in people])
+    w.writerow(["", "", "", "", "Saldo", *pad] + [fmt_input(summary.row(p.id).balance) for p in people])
     filename = f"metal-finance-{trip.id}.csv"
     return Response("﻿" + buf.getvalue(), mimetype="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})

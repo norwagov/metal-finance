@@ -8,9 +8,12 @@ from flask import Blueprint, abort, current_app, flash, redirect, render_templat
 from .. import receipt_ai
 from ..images import save_image
 from ..models import Attachment, Bill, Category, Product, Trip, db
-from ..money import fmt_amount, parse_money, parse_quantity
+from ..money import CURRENCIES, fmt_amount, fmt_rate, parse_money, parse_quantity, parse_rate
 from ..settlement import bill_shares, product_shares, summarize
-from . import apply_receipt, attachment_path, clean, int_or_none, parse_date, remove_files, selected_people
+from . import (
+    apply_receipt, attachment_path, clean, form_currency, int_or_none, parse_date, rate_label, remove_files,
+    selected_people, update_rate,
+)
 
 bp = Blueprint("bills", __name__)
 
@@ -29,15 +32,23 @@ def _save_photos(bill: Bill) -> None:
         bill.attachments.append(Attachment(filename=name))
 
 
-def _run_claude(bill: Bill, consumers, replace: bool = True) -> bool:
+def _flash_all(messages) -> None:
+    for level, msg in messages:
+        flash(msg, level)
+
+
+def _currencies(*extra: str) -> list[str]:
+    return CURRENCIES + [c for c in dict.fromkeys(extra) if c and c not in CURRENCIES]
+
+
+def _run_claude(bill: Bill, consumers, replace: bool = True, currency: str | None = None) -> bool:
     paths = [attachment_path(a) for a in bill.attachments]
     try:
         data = receipt_ai.parse_receipt(paths, [c.name for c in _categories()], bill.trip.currency)
     except receipt_ai.ReceiptError as exc:
         flash(f"Nie udało się odczytać paragonu: {exc}", "danger")
         return False
-    for level, msg in apply_receipt(bill, data, consumers, replace=replace):
-        flash(msg, level)
+    _flash_all(apply_receipt(bill, data, consumers, replace=replace, currency=currency))
     return True
 
 
@@ -60,6 +71,7 @@ def new(trip_id: int):
         return render_template(
             "bill_new.html", trip=trip, mode=mode, categories=_categories(), form=form,
             default_payer=_default_payer(trip), today=date.today(), claude_ready=receipt_ai.is_configured(),
+            currencies=_currencies(trip.currency, *(b.currency for b in trip.bills)),
         )
 
     if request.method == "GET":
@@ -80,9 +92,12 @@ def new(trip_id: int):
             flash("Niepoprawna kwota.", "danger")
             return render(form)
 
+    # w trybie AI puste pole waluty = rozpozna Claude
+    chosen_currency = form_currency(form.get("currency"), None)
     bill = Bill(
         trip=trip, payer=payer, category=cat, title=clean(form.get("title")),
         date=parse_date(form.get("date")) or date.today(), note=(form.get("note") or "").strip(),
+        currency=chosen_currency or trip.currency,
     )
     try:
         _save_photos(bill)
@@ -98,7 +113,9 @@ def new(trip_id: int):
             return render(form)
         db.session.add(bill)
         db.session.flush()
-        ok = _run_claude(bill, consumers)
+        ok = _run_claude(bill, consumers, currency=chosen_currency)
+        if not ok:
+            _flash_all(update_rate(bill))
         if not bill.title:
             bill.title = "Paragon"
         db.session.commit()
@@ -111,11 +128,15 @@ def new(trip_id: int):
     if amount is not None:
         bill.products.append(Product(name=bill.title, quantity=1, price=amount, consumers=consumers))
     db.session.add(bill)
+    rate_msgs = update_rate(bill)
     db.session.commit()
     if amount is not None and form.get("next") != "items":
-        flash(f"Dodano „{bill.title}” - {fmt_amount(amount, trip.currency)} (płacił(a) {payer.name}).", "success")
+        converted = f" = {fmt_amount(bill.total_converted, trip.currency)}" if bill.is_foreign and bill.rate else ""
+        flash(f"Dodano „{bill.title}” - {fmt_amount(amount, bill.currency)}{converted} (płacił(a) {payer.name}).", "success")
+        _flash_all(m for m in rate_msgs if m[0] != "info")
         return redirect(url_for("trips.show", trip_id=trip.id))
     flash("Rachunek utworzony - dodaj pozycje.", "success")
+    _flash_all(rate_msgs)
     return redirect(url_for("bills.show", bill_id=bill.id))
 
 
@@ -125,6 +146,7 @@ def show(bill_id: int):
     return render_template(
         "bill.html", bill=bill, trip=bill.trip, categories=_categories(), summary=summarize(bill.trip),
         shares=bill_shares(bill), product_shares=product_shares, claude_ready=receipt_ai.is_configured(),
+        currencies=_currencies(bill.trip.currency, bill.currency), rate_label=rate_label(bill),
     )
 
 
@@ -141,14 +163,42 @@ def edit(bill_id: int):
     except ValueError:
         flash("Niepoprawna kwota z paragonu.", "danger")
         return redirect(url_for("bills.show", bill_id=bill.id))
+    try:
+        typed_rate = parse_rate(form.get("exchange_rate"))
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect(url_for("bills.show", bill_id=bill.id))
+    old_currency, old_date, old_rate = bill.currency, bill.date, fmt_rate(bill.rate_value) if bill.is_foreign else ""
     bill.payer = payer
     bill.title = clean(form.get("title")) or bill.title
     bill.category = db.session.get(Category, int_or_none(form.get("category_id"))) if form.get("category_id") else None
     bill.date = parse_date(form.get("date")) or bill.date
     bill.note = (form.get("note") or "").strip()
     bill.declared_total = declared
+    bill.currency = form_currency(form.get("currency"), bill.currency)
+
+    messages = []
+    if bill.currency != old_currency:
+        bill.set_rate(None)  # kurs dotyczył innej waluty
+        messages = update_rate(bill)
+    elif typed_rate is not None and fmt_rate(typed_rate) != old_rate:
+        bill.set_rate(typed_rate, None, "manual")
+        messages = [("info", f"Zapisano kurs ręczny: {rate_label(bill)}.")]
+    elif bill.missing_rate or bill.date != old_date:
+        messages = update_rate(bill)
     db.session.commit()
     flash("Zapisano rachunek.", "success")
+    _flash_all(messages)
+    return redirect(url_for("bills.show", bill_id=bill.id))
+
+
+@bp.post("/bills/<int:bill_id>/rate")
+def refresh_rate(bill_id: int):
+    """Pobiera kurs na nowo (także w miejsce kursu wpisanego ręcznie)."""
+    bill = db.get_or_404(Bill, bill_id)
+    messages = update_rate(bill, force=True)
+    db.session.commit()
+    _flash_all(messages or [("info", "Rachunek jest w walucie wyjazdu - kurs nie jest potrzebny.")])
     return redirect(url_for("bills.show", bill_id=bill.id))
 
 

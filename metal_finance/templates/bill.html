@@ -2,7 +2,7 @@
 {% import '_macros.html' as m with context %}
 {% block title %}{{ bill.title }}{% endblock %}
 {% block content %}
-{% set cur = trip.currency %}
+{% set cur = bill.currency %}
 <a href="{{ url_for('trips.show', trip_id=trip.id) }}" class="small text-secondary text-decoration-none"><i class="bi bi-arrow-left"></i> {{ trip.name }}</a>
 <div class="d-flex flex-wrap align-items-end justify-content-between gap-2 mt-1 mb-3">
   <div class="d-flex align-items-center gap-3">
@@ -15,8 +15,22 @@
   <div class="text-end">
     <div class="small text-secondary text-uppercase">Suma pozycji</div>
     <div class="display-total" data-bind="bill-total:{{ bill.id }}">{{ bill.total|money(cur) }}</div>
+    {% if bill.is_foreign %}
+    <div class="small {{ 'text-danger' if bill.missing_rate else 'text-secondary' }}">
+      <span class="money fw-semibold" data-bind="bill-converted:{{ bill.id }}">{{ ('≈ ' ~ bill.total_converted|money(trip.currency)) if not bill.missing_rate else 'brak kursu' }}</span>
+      {% if rate_label %}<div>{{ rate_label }}</div>{% endif %}
+    </div>
+    {% endif %}
   </div>
 </div>
+
+{% if bill.missing_rate %}
+<div class="alert alert-danger py-2 small">
+  <i class="bi bi-currency-exchange"></i> Rachunek jest w {{ bill.currency }}, a wyjazd rozliczany w {{ trip.currency }} - brak kursu, więc rachunek nie jest liczony w rozliczeniu.
+  Wpisz kurs w „Dane rachunku” albo spróbuj
+  <button type="submit" form="refresh-rate" class="btn btn-link alert-link p-0 align-baseline small">pobrać go ponownie</button>.
+</div>
+{% endif %}
 
 <div class="alert alert-warning py-2 small {% if not bill.total_mismatch %}d-none{% endif %}" data-show-if-text>
   <i class="bi bi-calculator"></i> <span data-bind="bill-mismatch:{{ bill.id }}">{% if bill.total_mismatch %}Suma pozycji różni się od paragonu o {{ bill.total_mismatch|money(cur, sign=True) }}{% endif %}</span>
@@ -138,6 +152,26 @@
           </div>
           <div class="col-6"><label class="form-label small" for="date">Data</label><input class="form-control" type="date" id="date" name="date" value="{{ bill.date.isoformat() if bill.date else '' }}"></div>
           <div class="col-6"><label class="form-label small" for="declared_total">Suma z paragonu</label><input class="form-control money" id="declared_total" name="declared_total" inputmode="decimal" value="{{ bill.declared_total|money_input }}" placeholder="do kontroli"></div>
+          <div class="col-6">
+            <label class="form-label small" for="currency">Waluta rachunku</label>
+            <select class="form-select" id="currency" name="currency">
+              {% for c in currencies %}<option value="{{ c }}" {% if bill.currency == c %}selected{% endif %}>{{ c }}{% if c == trip.currency %} (wyjazd){% endif %}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-6">
+            {% if bill.is_foreign %}
+            <label class="form-label small" for="exchange_rate">Kurs: 1 {{ bill.currency }} =</label>
+            <div class="input-group">
+              <input class="form-control money" id="exchange_rate" name="exchange_rate" inputmode="decimal" value="{{ bill.rate_value|rate if bill.rate_value is not none else '' }}" placeholder="np. 4,30">
+              <span class="input-group-text">{{ currency_symbol(trip.currency) }}</span>
+              <button type="submit" form="refresh-rate" class="btn btn-outline-secondary" title="Pobierz kurs z NBP z dnia rachunku"><i class="bi bi-arrow-repeat"></i></button>
+            </div>
+            <div class="form-text">{{ 'kurs ręczny' if bill.rate_source == 'manual' else (bill.rate_source ~ (' z ' ~ bill.rate_date|pldate if bill.rate_date else '')) if bill.rate_source else 'brak kursu' }}</div>
+            {% else %}
+            <label class="form-label small">Kurs</label>
+            <div class="form-text mt-0">nie trzeba - rachunek w walucie wyjazdu ({{ trip.currency }})</div>
+            {% endif %}
+          </div>
         </div>
         <div><label class="form-label small" for="note">Notatka</label><textarea class="form-control" id="note" name="note" rows="2">{{ bill.note or '' }}</textarea></div>
       </div>
@@ -146,6 +180,7 @@
         <button class="btn btn-metal btn-sm"><i class="bi bi-check-lg"></i> Zapisz</button>
       </div>
     </form>
+    <form id="refresh-rate" method="post" action="{{ url_for('bills.refresh_rate', bill_id=bill.id) }}">{{ m.csrf() }}</form>
     <form id="delete-bill" method="post" action="{{ url_for('bills.delete', bill_id=bill.id) }}" data-confirm="Usunąć rachunek „{{ bill.title }}” razem z pozycjami i zdjęciami?">{{ m.csrf() }}</form>
   </div>
 </div>

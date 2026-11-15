@@ -5,6 +5,8 @@ Zasady:
 * koszt pozycji dzielimy po równo między jej konsumentów (dokładnie, na ułamkach),
   a gdy pozycja ma włączone wagi - proporcjonalnie do wag konsumentów,
 * pozycja bez konsumentów nie wchodzi do rozliczenia (koszt zostaje u płacącego),
+* kwoty rachunku w obcej walucie przeliczamy kursem rachunku na walutę wyjazdu (dokładnie,
+  na ułamkach); rachunek w obcej walucie bez kursu nie wchodzi do rozliczenia,
 * spłata A -> B zwiększa saldo A i zmniejsza saldo B,
 * saldo > 0 oznacza, że osoba powinna dostać pieniądze.
 """
@@ -20,11 +22,15 @@ from .money import round_cents
 @dataclass
 class PersonRow:
     person: object
-    paid: int = 0
+    paid_exact: Fraction = Fraction(0)
     consumed: Fraction = Fraction(0)
     sent: int = 0
     received: int = 0
     balance: int = 0  # w groszach, po zaokrągleniu
+
+    @property
+    def paid(self) -> int:
+        return round_cents(self.paid_exact)
 
     @property
     def consumed_cents(self) -> int:
@@ -42,9 +48,10 @@ class Transfer:
 class Summary:
     people: list[PersonRow]
     transfers: list[Transfer]
-    total: int  # suma wszystkich pozycji (także nieprzypisanych)
-    settled_total: int  # suma pozycji z konsumentami
+    total: int  # suma wszystkich pozycji (także nieprzypisanych), w walucie wyjazdu
+    settled_total: int  # suma pozycji z konsumentami, w walucie wyjazdu
     unassigned: list = field(default_factory=list)  # Product bez konsumentów
+    missing_rate: list = field(default_factory=list)  # Bill w obcej walucie bez kursu (pominięte)
     by_category: list = field(default_factory=list)  # [(category|None, {person_id: Fraction}, total_cents)]
 
     def row(self, person_id: int) -> PersonRow | None:
@@ -88,34 +95,42 @@ def summarize(trip) -> Summary:
     for p in trip.participants:
         row(p)
 
-    total = 0
-    settled = 0
+    total = Fraction(0)
+    settled = Fraction(0)
     unassigned = []
+    missing_rate = []
     cats: dict[object, dict] = {}
 
     for bill in trip.bills:
+        rate = bill.rate
+        if rate is None:
+            if bill.products:
+                missing_rate.append(bill)
+            continue
         cat_key = bill.category.id if bill.category else None
         if cat_key not in cats:
-            cats[cat_key] = {"category": bill.category, "shares": defaultdict(Fraction), "total": 0}
+            cats[cat_key] = {"category": bill.category, "shares": defaultdict(Fraction), "total": Fraction(0)}
         for prod in bill.products:
-            total += prod.price
+            price = prod.price * rate
+            total += price
             shares = product_shares(prod)
             if not shares:
                 unassigned.append(prod)
                 continue
-            settled += prod.price
-            row(bill.payer).paid += prod.price
-            cats[cat_key]["total"] += prod.price
+            settled += price
+            row(bill.payer).paid_exact += price
+            cats[cat_key]["total"] += price
             for c in prod.consumers:
-                row(c).consumed += shares[c.id]
-                cats[cat_key]["shares"][c.id] += shares[c.id]
+                share = shares[c.id] * rate
+                row(c).consumed += share
+                cats[cat_key]["shares"][c.id] += share
 
     for pay in trip.payments:
         row(pay.sender).sent += pay.amount
         row(pay.receiver).received += pay.amount
 
     people = [rows[i] for i in order]
-    exact = {r.person.id: Fraction(r.paid) - r.consumed + r.sent - r.received for r in people}
+    exact = {r.person.id: r.paid_exact - r.consumed + r.sent - r.received for r in people}
     rounded = {pid: round_cents(v) for pid, v in exact.items()}
     drift = sum(rounded.values())
     if drift and rounded:
@@ -126,16 +141,17 @@ def summarize(trip) -> Summary:
         r.balance = rounded[r.person.id]
 
     by_category = sorted(
-        ((v["category"], dict(v["shares"]), v["total"]) for v in cats.values() if v["total"]),
+        ((v["category"], dict(v["shares"]), round_cents(v["total"])) for v in cats.values() if v["total"]),
         key=lambda t: -t[2],
     )
 
     return Summary(
         people=people,
         transfers=minimize_transfers(people),
-        total=total,
-        settled_total=settled,
+        total=round_cents(total),
+        settled_total=round_cents(settled),
         unassigned=unassigned,
+        missing_rate=missing_rate,
         by_category=by_category,
     )
 

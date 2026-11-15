@@ -28,6 +28,7 @@
             <select class="form-select" id="currency" name="currency">
               {% for c in currencies %}<option value="{{ c }}" {% if form.get('currency', trip.currency) == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
             </select>
+            <div class="form-text">waluta rozliczenia - rachunki w innych walutach przeliczamy po kursie NBP</div>
           </div>
         </div>
         <div>

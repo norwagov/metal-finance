@@ -8,6 +8,7 @@
   <i class="bi bi-info-circle"></i> Zaznacz, kto korzystał z każdej pozycji - koszt dzieli się po równo między zaznaczonych.
   Przycisk <i class="bi bi-sliders"></i> w wierszu pokazuje wagi przy osobach - wtedy koszt dzieli się proporcjonalnie (np. 2 = podwójna porcja).
   Nazwy, ilości i kwoty edytujesz bezpośrednio w komórkach; zmiany zapisują się od razu.
+  Kwoty rachunków są w ich walucie, a wiersze „Zapłacił(a)/Zużył(a)/Saldo” - w {{ trip.currency }} (po kursie rachunku).
 </p>
 
 {% if not bills %}
@@ -38,12 +39,15 @@
             </div>
           </div>
         </td>
-        <td class="cell-num fw-semibold money" data-bind="bill-total:{{ b.id }}">{{ b.total|money(trip.currency) }}</td>
+        <td class="cell-num fw-semibold money">
+          <span data-bind="bill-total:{{ b.id }}">{{ b.total|money(b.currency) }}</span>
+          {% if b.is_foreign %}<div class="small fw-normal {{ 'text-danger' if b.missing_rate else 'text-secondary' }}" data-bind="bill-converted:{{ b.id }}">{{ ('≈ ' ~ b.total_converted|money(trip.currency)) if not b.missing_rate else 'brak kursu' }}</div>{% endif %}
+        </td>
         {% set bsh = bill_shares(b) %}
         {% for p in trip.participants %}
         <td class="cell-check small bill-share {% if p.id == b.payer_id %}is-payer{% endif %}">
           {% if p.id == b.payer_id %}<i class="bi bi-wallet2" title="{{ p.name }} płacił(a) za ten rachunek"></i>{% endif %}
-          <span class="money" data-bind="bill-share:{{ b.id }}:{{ p.id }}">{{ bsh[p.id]|money(trip.currency) if p.id in bsh else '—' }}</span>
+          <span class="money" data-bind="bill-share:{{ b.id }}:{{ p.id }}">{{ bsh[p.id]|money(b.currency) if p.id in bsh else '—' }}</span>
         </td>
         {% endfor %}
         <td></td>
