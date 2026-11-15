@@ -8,7 +8,7 @@ from datetime import date, datetime
 from flask import current_app
 
 from .. import fx
-from ..models import Attachment, Bill, Category, Person, Product, db
+from ..models import Attachment, Bill, Category, Person, Product, Trip, TripRate, db
 from ..money import currency_symbol, fmt_rate, normalize_currency
 
 
@@ -86,34 +86,68 @@ def form_currency(value, default: str | None) -> str | None:
     return normalize_currency(value) or default
 
 
-def rate_label(bill: Bill) -> str:
-    """'1 EUR = 4,3895 zł (NBP, 10.11.2026)'."""
-    if not bill.is_foreign or bill.rate_value is None:
+def rate_label(trip: Trip, currency: str) -> str:
+    """'1 EUR = 4,3895 zł (NBP, 10.11.2026)'; pusty, gdy brak kursu."""
+    tr = trip.rate_for(currency)
+    if tr is None or currency == trip.currency:
         return ""
-    src = "kurs ręczny" if bill.rate_source == "manual" else (bill.rate_source or "")
-    when = bill.rate_date.strftime("%d.%m.%Y") if bill.rate_date and bill.rate_source != "manual" else ""
-    meta = ", ".join(x for x in (src, when) if x)
-    return f"1 {bill.currency} = {fmt_rate(bill.rate_value)} {currency_symbol(bill.trip_currency)}" + (f" ({meta})" if meta else "")
+    if tr.source == "manual":
+        meta = "kurs ręczny"
+    else:
+        meta = ", ".join(x for x in (tr.source, tr.rate_date.strftime("%d.%m.%Y") if tr.rate_date else "") if x)
+    return f"1 {currency} = {fmt_rate(tr.value)} {currency_symbol(trip.currency)}" + (f" ({meta})" if meta else "")
 
 
-def update_rate(bill: Bill, force: bool = False) -> list[tuple[str, str]]:
-    """Pobiera kurs waluty rachunku na walutę wyjazdu z dnia rachunku (NBP, zapasowo EBC).
-
-    Kurs wpisany ręcznie zostaje, chyba że force=True. Gdy pobranie się nie uda, zostaje dotychczasowy kurs.
-    """
-    if not bill.is_foreign:
-        bill.set_rate(None)
-        return []
-    if bill.rate_source == "manual" and bill.exchange_rate and not force:
-        return []
+def _fetch(trip: Trip, currency: str, day: date | None) -> fx.Rate | str:
     try:
-        rate = fx.get_rate(bill.currency, bill.trip_currency, bill.date)
+        return fx.get_rate(currency, trip.currency, day)
     except fx.RateError as exc:
-        if bill.exchange_rate:
-            return [("warning", f"{exc} Zostaje dotychczasowy kurs: {rate_label(bill)}.")]
-        return [("danger", f"{exc} Rachunek nie wejdzie do rozliczenia, dopóki nie wpiszesz kursu ręcznie (Dane rachunku → Kurs).")]
-    bill.set_rate(rate.value, rate.day, rate.source)
-    return [("info", f"Rachunek w {bill.currency} - przeliczany na {bill.trip_currency} po kursie {rate_label(bill)}.")]
+        return str(exc)
+
+
+def ensure_rate(trip: Trip, currency: str | None, day: date | None = None) -> list[tuple[str, str]]:
+    """Gdy waluta pierwszy raz pojawia się w wyjeździe - pobiera jej kurs z NBP (z dnia `day`).
+
+    Kurs pobieramy tylko raz; potem zmienia się wyłącznie ręcznie albo przyciskiem „odśwież”.
+    """
+    if not currency or currency == trip.currency or trip.rate_for(currency) is not None:
+        return []
+    got = _fetch(trip, currency, day)
+    if isinstance(got, str):
+        return [("danger", f"{got} Rachunki w {currency} nie wejdą do rozliczenia, dopóki nie wpiszesz kursu "
+                           f"(Rozliczenie → Kursy walut).")]
+    tr = TripRate(currency=currency)
+    tr.set(got.value, got.day, got.source)
+    trip.rates.append(tr)
+    return [("info", f"Nowa waluta w wyjeździe: {currency}. Kurs pobrany raz i używany dla wszystkich rachunków "
+                     f"w {currency}: {rate_label(trip, currency)}. Zmienisz go w Rozliczenie → Kursy walut.")]
+
+
+def refresh_rate(trip: Trip, currency: str) -> list[tuple[str, str]]:
+    """Pobiera najnowszy kurs NBP (nadpisuje też kurs ręczny)."""
+    if currency == trip.currency:
+        return []
+    got = _fetch(trip, currency, None)
+    if isinstance(got, str):
+        return [("danger", got)]
+    tr = trip.rate_for(currency)
+    if tr is None:
+        tr = TripRate(currency=currency)
+        trip.rates.append(tr)
+    tr.set(got.value, got.day, got.source)
+    return [("success", f"Odświeżono kurs: {rate_label(trip, currency)}.")]
+
+
+def set_manual_rate(trip: Trip, currency: str, value) -> bool:
+    """Zapisuje kurs wpisany ręcznie; zwraca True, gdy coś się zmieniło."""
+    tr = trip.rate_for(currency)
+    if tr is not None and tr.value == value:
+        return False
+    if tr is None:
+        tr = TripRate(currency=currency)
+        trip.rates.append(tr)
+    tr.set(value, None, "manual")
+    return True
 
 
 def apply_receipt(bill: Bill, data: dict, consumers: list[Person], replace: bool = True,
@@ -140,14 +174,10 @@ def apply_receipt(bill: Bill, data: dict, consumers: list[Person], replace: bool
         bill.title = data["merchant"]
     if not bill.title.strip():
         bill.title = "Paragon"
-    old_currency, old_date = bill.currency, bill.date
     if data.get("date"):
         bill.date = data["date"]
     detected = normalize_currency(data.get("currency"))
-    new_currency = currency or detected or bill.currency or bill.trip_currency
-    if new_currency != old_currency:
-        bill.currency = new_currency
-        bill.set_rate(None)
+    bill.currency = currency or detected or bill.currency or bill.trip_currency
     if bill.category is None:
         cat = match_category(data.get("category"))
         if cat:
@@ -166,8 +196,6 @@ def apply_receipt(bill: Bill, data: dict, consumers: list[Person], replace: bool
         messages.append(("info", f"Uwagi Claude: {data['notes']}"))
     if currency and detected and detected != currency:
         messages.append(("warning", f"Claude rozpoznał walutę {detected}, ale zostaje wybrana przez Ciebie {currency}."))
-    if bill.is_foreign and (bill.missing_rate or bill.currency != old_currency or bill.date != old_date):
-        messages += update_rate(bill)
-    elif not bill.is_foreign:
-        bill.set_rate(None)
+    if bill.trip is not None:
+        messages += ensure_rate(bill.trip, bill.currency, bill.date)
     return messages

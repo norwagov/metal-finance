@@ -8,11 +8,11 @@ from flask import Blueprint, abort, current_app, flash, redirect, render_templat
 from .. import receipt_ai
 from ..images import save_image
 from ..models import Attachment, Bill, Category, Product, Trip, db
-from ..money import CURRENCIES, fmt_amount, fmt_rate, parse_money, parse_quantity, parse_rate
+from ..money import CURRENCIES, fmt_amount, parse_money, parse_quantity
 from ..settlement import bill_shares, product_shares, summarize
 from . import (
-    apply_receipt, attachment_path, clean, form_currency, int_or_none, parse_date, rate_label, remove_files,
-    selected_people, update_rate,
+    apply_receipt, attachment_path, clean, ensure_rate, form_currency, int_or_none, parse_date, rate_label,
+    remove_files, selected_people,
 )
 
 bp = Blueprint("bills", __name__)
@@ -115,7 +115,7 @@ def new(trip_id: int):
         db.session.flush()
         ok = _run_claude(bill, consumers, currency=chosen_currency)
         if not ok:
-            _flash_all(update_rate(bill))
+            _flash_all(ensure_rate(trip, bill.currency, bill.date))
         if not bill.title:
             bill.title = "Paragon"
         db.session.commit()
@@ -128,7 +128,7 @@ def new(trip_id: int):
     if amount is not None:
         bill.products.append(Product(name=bill.title, quantity=1, price=amount, consumers=consumers))
     db.session.add(bill)
-    rate_msgs = update_rate(bill)
+    rate_msgs = ensure_rate(trip, bill.currency, bill.date)
     db.session.commit()
     if amount is not None and form.get("next") != "items":
         converted = f" = {fmt_amount(bill.total_converted, trip.currency)}" if bill.is_foreign and bill.rate else ""
@@ -146,7 +146,7 @@ def show(bill_id: int):
     return render_template(
         "bill.html", bill=bill, trip=bill.trip, categories=_categories(), summary=summarize(bill.trip),
         shares=bill_shares(bill), product_shares=product_shares, claude_ready=receipt_ai.is_configured(),
-        currencies=_currencies(bill.trip.currency, bill.currency), rate_label=rate_label(bill),
+        currencies=_currencies(bill.trip.currency, bill.currency), rate_label=rate_label(bill.trip, bill.currency),
     )
 
 
@@ -163,12 +163,6 @@ def edit(bill_id: int):
     except ValueError:
         flash("Niepoprawna kwota z paragonu.", "danger")
         return redirect(url_for("bills.show", bill_id=bill.id))
-    try:
-        typed_rate = parse_rate(form.get("exchange_rate"))
-    except ValueError as exc:
-        flash(str(exc), "danger")
-        return redirect(url_for("bills.show", bill_id=bill.id))
-    old_currency, old_date, old_rate = bill.currency, bill.date, fmt_rate(bill.rate_value) if bill.is_foreign else ""
     bill.payer = payer
     bill.title = clean(form.get("title")) or bill.title
     bill.category = db.session.get(Category, int_or_none(form.get("category_id"))) if form.get("category_id") else None
@@ -177,28 +171,10 @@ def edit(bill_id: int):
     bill.declared_total = declared
     bill.currency = form_currency(form.get("currency"), bill.currency)
 
-    messages = []
-    if bill.currency != old_currency:
-        bill.set_rate(None)  # kurs dotyczył innej waluty
-        messages = update_rate(bill)
-    elif typed_rate is not None and fmt_rate(typed_rate) != old_rate:
-        bill.set_rate(typed_rate, None, "manual")
-        messages = [("info", f"Zapisano kurs ręczny: {rate_label(bill)}.")]
-    elif bill.missing_rate or bill.date != old_date:
-        messages = update_rate(bill)
+    messages = ensure_rate(bill.trip, bill.currency, bill.date)
     db.session.commit()
     flash("Zapisano rachunek.", "success")
     _flash_all(messages)
-    return redirect(url_for("bills.show", bill_id=bill.id))
-
-
-@bp.post("/bills/<int:bill_id>/rate")
-def refresh_rate(bill_id: int):
-    """Pobiera kurs na nowo (także w miejsce kursu wpisanego ręcznie)."""
-    bill = db.get_or_404(Bill, bill_id)
-    messages = update_rate(bill, force=True)
-    db.session.commit()
-    _flash_all(messages or [("info", "Rachunek jest w walucie wyjazdu - kurs nie jest potrzebny.")])
     return redirect(url_for("bills.show", bill_id=bill.id))
 
 

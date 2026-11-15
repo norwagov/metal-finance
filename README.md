@@ -5,7 +5,7 @@ Aplikacja webowa (Flask) do rozliczania się ze znajomymi za wspólne wyjazdy i 
 - **Wyjazd / rozliczenie** → składa się z **rachunków** → rachunek składa się z **pozycji (produktów)**.
 - Każdy rachunek ma **płatnika**, każda pozycja ma **konsumentów** - koszt pozycji dzieli się po równo między nich.
 - **Tabela** w stylu Excela: wiersze = pozycje, kolumny = osoby; klikasz, kto z czego korzystał, a sumy i salda przeliczają się od razu.
-- **Waluty**: każdy rachunek może być w innej walucie (EUR, CZK, HUF…). Przy zdjęciu walutę rozpoznaje Claude, a kwoty przeliczamy na walutę wyjazdu po kursie NBP z dnia rachunku.
+- **Waluty**: każdy rachunek może być w innej walucie (EUR, CZK, HUF…). Przy zdjęciu walutę rozpoznaje Claude, a kwoty przeliczamy na walutę wyjazdu po jednym kursie na walutę dla całego wyjazdu (pobieranym raz z NBP, potem ręcznie lub „odśwież”).
 - **Kategorie** rachunków (paliwo, jedzenie, nocleg…) - własne, z ikoną i kolorem.
 - Rachunki dodajesz **ręcznie** albo **zdjęciem paragonu** - pozycje odczytuje **Claude w ramach subskrypcji Pro/Max** (nie płatne API pay-as-you-go). Zdjęcia zostają przy rachunku.
 - **Rozliczenie**: salda, minimalna lista przelewów „kto komu ile”, zapis spłat, podział wydatków na kategorie, tekst do wklejenia na grupę, eksport CSV do Excela.
@@ -79,9 +79,10 @@ Bez tokenu aplikacja działa normalnie - zdjęcie zapisze się przy rachunku, a 
 - Przelewy: dłużnicy są parowani z wierzycielami tak, by przelewów było jak najmniej (maks. n−1).
 - Rabaty z paragonu Claude odejmuje od pozycji, której dotyczą. Jeśli suma pozycji różni się od sumy z paragonu, rachunek dostaje ostrzeżenie.
 - Rachunek ma własną walutę - pozycje i sumy rachunku są w niej, a salda, przelewy i spłaty w walucie wyjazdu. Przy odczycie zdjęcia walutę rozpoznaje Claude (symbole, adres, język, NIP/DIČ…), chyba że wybierzesz ją sam.
-- Kurs: średni kurs **NBP** (api.nbp.pl, tabela A, a dla rzadszych walut tabela B) z dnia rachunku lub ostatniego wcześniejszego notowania; pary bez PLN (np. CZK → EUR) liczone krzyżowo. Gdy NBP nie odpowiada - kurs EBC z api.frankfurter.dev. Oba API są darmowe i bez kluczy.
-- Kurs zapisuje się przy rachunku (zmiana daty lub waluty pobiera go na nowo). Można wpisać kurs ręcznie (np. z wyciągu karty) albo pobrać go ponownie przyciskiem obok pola. Rachunek w obcej walucie bez kursu nie wchodzi do rozliczenia i jest wyraźnie oznaczony.
-- Zmiana waluty wyjazdu: rachunki w dotychczasowej walucie wyjazdu przechodzą na nową (jak poprawka pomyłki), a kursy pozostałych pobierają się na nowo.
+- **Kurs jest jeden na walutę dla całego wyjazdu** (Rozliczenie → Kursy walut). Gdy waluta pierwszy raz pojawia się w rachunkach, kurs pobiera się **raz** z NBP (średni kurs z dnia tego rachunku lub ostatniego wcześniejszego notowania; tabela A, a dla rzadszych walut tabela B; pary bez PLN, np. CZK → EUR, liczone krzyżowo). Gdy NBP nie odpowiada - kurs EBC z api.frankfurter.dev. Oba API są darmowe i bez kluczy.
+- Potem kurs się już sam nie zmienia: wpisujesz go ręcznie (np. z wyciągu karty) albo klikasz „odśwież”, co pobiera najnowszy kurs NBP. Zmiana działa od razu na wszystkie rachunki w tej walucie.
+- Rachunki w walucie bez kursu nie wchodzą do rozliczenia i są wyraźnie oznaczone.
+- Zmiana waluty wyjazdu: rachunki w dotychczasowej walucie wyjazdu przechodzą na nową (jak poprawka pomyłki), a kursy walut pobierają się na nowo (były liczone wobec starej waluty).
 
 ## Kopia zapasowa
 

@@ -27,8 +27,8 @@
 {% if bill.missing_rate %}
 <div class="alert alert-danger py-2 small">
   <i class="bi bi-currency-exchange"></i> Rachunek jest w {{ bill.currency }}, a wyjazd rozliczany w {{ trip.currency }} - brak kursu, więc rachunek nie jest liczony w rozliczeniu.
-  Wpisz kurs w „Dane rachunku” albo spróbuj
-  <button type="submit" form="refresh-rate" class="btn btn-link alert-link p-0 align-baseline small">pobrać go ponownie</button>.
+  Wpisz kurs w <a href="{{ url_for('trips.settle', trip_id=trip.id) }}#kursy" class="alert-link">Rozliczenie → Kursy walut</a> albo spróbuj
+  <button type="submit" form="refresh-rate" class="btn btn-link alert-link p-0 align-baseline small">pobrać go z NBP</button>.
 </div>
 {% endif %}
 
@@ -159,16 +159,11 @@
             </select>
           </div>
           <div class="col-6">
-            {% if bill.is_foreign %}
-            <label class="form-label small" for="exchange_rate">Kurs: 1 {{ bill.currency }} =</label>
-            <div class="input-group">
-              <input class="form-control money" id="exchange_rate" name="exchange_rate" inputmode="decimal" value="{{ bill.rate_value|rate if bill.rate_value is not none else '' }}" placeholder="np. 4,30">
-              <span class="input-group-text">{{ currency_symbol(trip.currency) }}</span>
-              <button type="submit" form="refresh-rate" class="btn btn-outline-secondary" title="Pobierz kurs z NBP z dnia rachunku"><i class="bi bi-arrow-repeat"></i></button>
-            </div>
-            <div class="form-text">{{ 'kurs ręczny' if bill.rate_source == 'manual' else (bill.rate_source ~ (' z ' ~ bill.rate_date|pldate if bill.rate_date else '')) if bill.rate_source else 'brak kursu' }}</div>
-            {% else %}
             <label class="form-label small">Kurs</label>
+            {% if bill.is_foreign %}
+            <div class="small {{ 'text-danger' if bill.missing_rate else '' }}">{{ rate_label or 'brak kursu' }}</div>
+            <div class="form-text mt-0">wspólny dla wszystkich rachunków w {{ bill.currency }} - <a href="{{ url_for('trips.settle', trip_id=trip.id) }}#kursy">zmień w wyjeździe</a></div>
+            {% else %}
             <div class="form-text mt-0">nie trzeba - rachunek w walucie wyjazdu ({{ trip.currency }})</div>
             {% endif %}
           </div>
@@ -180,7 +175,11 @@
         <button class="btn btn-metal btn-sm"><i class="bi bi-check-lg"></i> Zapisz</button>
       </div>
     </form>
-    <form id="refresh-rate" method="post" action="{{ url_for('bills.refresh_rate', bill_id=bill.id) }}">{{ m.csrf() }}</form>
+    {% if bill.is_foreign %}
+    <form id="refresh-rate" method="post" action="{{ url_for('trips.refresh_rate_view', trip_id=trip.id, currency=bill.currency) }}">
+      {{ m.csrf() }}<input type="hidden" name="next" value="{{ url_for('bills.show', bill_id=bill.id) }}">
+    </form>
+    {% endif %}
     <form id="delete-bill" method="post" action="{{ url_for('bills.delete', bill_id=bill.id) }}" data-confirm="Usunąć rachunek „{{ bill.title }}” razem z pozycjami i zdjęciami?">{{ m.csrf() }}</form>
   </div>
 </div>

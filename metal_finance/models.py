@@ -92,6 +92,23 @@ class Trip(db.Model):
         "Payment", back_populates="trip", cascade="all, delete-orphan",
         order_by="(Payment.date, Payment.id)",
     )
+    rates = db.relationship("TripRate", cascade="all, delete-orphan", order_by="TripRate.currency")
+
+    def rate_for(self, currency: str | None) -> TripRate | None:
+        for r in self.rates:
+            if r.currency == currency:
+                return r
+        return None
+
+    @property
+    def foreign_currencies(self) -> list[str]:
+        """Waluty rachunków inne niż waluta wyjazdu (w kolejności alfabetycznej)."""
+        return sorted({b.currency for b in self.bills if b.currency and b.currency != self.currency})
+
+    @property
+    def rate_rows(self) -> list[tuple[str, TripRate | None]]:
+        """(waluta, kurs) dla każdej obcej waluty użytej w rachunkach."""
+        return [(c, self.rate_for(c)) for c in self.foreign_currencies]
 
     @property
     def total(self) -> int:
@@ -114,11 +131,8 @@ class Bill(db.Model):
     declared_total = db.Column(db.Integer)  # suma z paragonu (wg AI lub wpisana) do kontroli
     source = db.Column(db.String(10), default="manual")  # manual | ai
     created_at = db.Column(db.DateTime, default=_utcnow)
-    # Kwoty pozycji są w walucie rachunku; do rozliczenia przeliczamy je kursem na walutę wyjazdu.
+    # Kwoty pozycji są w walucie rachunku; do rozliczenia przeliczamy je kursem wyjazdu (TripRate).
     currency = db.Column(db.String(3), nullable=False, default="PLN", server_default="PLN")
-    exchange_rate = db.Column(db.String(24))  # 1 jednostka waluty rachunku = X waluty wyjazdu (Decimal jako tekst)
-    rate_date = db.Column(db.Date)  # data notowania kursu
-    rate_source = db.Column(db.String(10))  # NBP | EBC | manual
 
     trip = db.relationship("Trip", back_populates="bills")
     category = db.relationship("Category")
@@ -151,10 +165,15 @@ class Bill(db.Model):
         return bool(self.currency) and self.currency != self.trip_currency
 
     @property
+    def trip_rate(self) -> TripRate | None:
+        return self.trip.rate_for(self.currency) if self.is_foreign and self.trip else None
+
+    @property
     def rate_value(self) -> Decimal | None:
         if not self.is_foreign:
             return Decimal(1)
-        return Decimal(self.exchange_rate) if self.exchange_rate else None
+        tr = self.trip_rate
+        return tr.value if tr else None
 
     @property
     def rate(self) -> Fraction | None:
@@ -165,14 +184,6 @@ class Bill(db.Model):
     @property
     def missing_rate(self) -> bool:
         return self.rate is None
-
-    def set_rate(self, value: Decimal | None, day: date | None = None, source: str | None = None) -> None:
-        if value is None or not self.is_foreign:
-            self.exchange_rate, self.rate_date, self.rate_source = None, None, None
-            return
-        self.exchange_rate = format(Decimal(value).normalize(), "f")
-        self.rate_date = day
-        self.rate_source = source
 
     def convert(self, cents) -> Fraction | None:
         """Kwota w walucie rachunku -> dokładna kwota w walucie wyjazdu."""
@@ -193,6 +204,32 @@ class Bill(db.Model):
             return None
         diff = self.total - self.declared_total
         return diff or None
+
+
+class TripRate(db.Model):
+    """Kurs waluty w danym wyjeździe: 1 `currency` = `rate` waluty wyjazdu.
+
+    Pobierany z NBP raz - gdy waluta pierwszy raz pojawia się w rachunkach - potem zmienia się
+    tylko ręcznie albo przyciskiem „odśwież”.
+    """
+    __table_args__ = (db.UniqueConstraint("trip_id", "currency"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    trip_id = db.Column(db.ForeignKey("trip.id", ondelete="CASCADE"), nullable=False, index=True)
+    currency = db.Column(db.String(3), nullable=False)
+    rate = db.Column(db.String(24), nullable=False)  # Decimal jako tekst
+    rate_date = db.Column(db.Date)  # data notowania (dla kursu z NBP/EBC)
+    source = db.Column(db.String(10))  # NBP | EBC | manual
+    updated_at = db.Column(db.DateTime, default=_utcnow, onupdate=_utcnow)
+
+    @property
+    def value(self) -> Decimal:
+        return Decimal(self.rate)
+
+    def set(self, value: Decimal, day: date | None, source: str) -> None:
+        self.rate = format(Decimal(value).normalize(), "f")
+        self.rate_date = day
+        self.source = source
 
 
 class Product(db.Model):
@@ -279,12 +316,7 @@ def upgrade_schema() -> None:
     insp = db.inspect(db.engine)
     added = {
         "product": [("weighted", "BOOLEAN NOT NULL DEFAULT 0")],
-        "bill": [
-            ("currency", "VARCHAR(3) NOT NULL DEFAULT 'PLN'"),
-            ("exchange_rate", "VARCHAR(24)"),
-            ("rate_date", "DATE"),
-            ("rate_source", "VARCHAR(10)"),
-        ],
+        "bill": [("currency", "VARCHAR(3) NOT NULL DEFAULT 'PLN'")],
     }
     for table, columns in added.items():
         have = {c["name"] for c in insp.get_columns(table)}
@@ -298,6 +330,34 @@ def upgrade_schema() -> None:
                     conn.execute(db.text(
                         "UPDATE bill SET currency = (SELECT trip.currency FROM trip WHERE trip.id = bill.trip_id)"
                     ))
+    _migrate_bill_rates(insp)
+
+
+def _migrate_bill_rates(insp) -> None:
+    """Kursy zapisane kiedyś przy rachunkach (bill.exchange_rate) -> jeden kurs na walutę wyjazdu.
+
+    Bierzemy kurs z najwcześniej dodanego rachunku w danej walucie (ręczny ma pierwszeństwo),
+    a stare kolumny czyścimy, żeby migracja nie wróciła przy następnym starcie.
+    """
+    if "exchange_rate" not in {c["name"] for c in insp.get_columns("bill")}:
+        return
+    with db.engine.begin() as conn:
+        rows = conn.execute(db.text(
+            "SELECT b.trip_id, b.currency, b.exchange_rate, b.rate_date, b.rate_source FROM bill b "
+            "JOIN trip t ON t.id = b.trip_id WHERE b.exchange_rate IS NOT NULL AND b.currency != t.currency "
+            "ORDER BY (b.rate_source = 'manual') DESC, b.id"
+        )).fetchall()
+        seen = {tuple(r) for r in conn.execute(db.text("SELECT trip_id, currency FROM trip_rate"))}
+        for trip_id, currency, rate, rate_date, source in rows:
+            if (trip_id, currency) in seen:
+                continue
+            seen.add((trip_id, currency))
+            conn.execute(
+                db.text("INSERT INTO trip_rate (trip_id, currency, rate, rate_date, source, updated_at) "
+                        "VALUES (:t, :c, :r, :d, :s, :u)"),
+                {"t": trip_id, "c": currency, "r": rate, "d": rate_date, "s": source or "NBP", "u": _utcnow().isoformat(" ")},
+            )
+        conn.execute(db.text("UPDATE bill SET exchange_rate = NULL WHERE exchange_rate IS NOT NULL"))
 
 
 def seed_defaults() -> None:

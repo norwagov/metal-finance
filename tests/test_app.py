@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 
 from metal_finance import create_app, fx, receipt_ai
-from metal_finance.models import Bill, Category, Payment, Person, Product, Trip, db
+from metal_finance.models import Bill, Category, Payment, Person, Product, Trip, TripRate, db
 from metal_finance.money import fmt_amount, parse_money, round_cents
 from metal_finance.settlement import summarize
 
@@ -369,19 +369,20 @@ def test_summary_converts_foreign_bills(app):
         eur = Bill(trip=t, title="Pizza w Wiedniu", payer=c, currency="EUR")
         eur.products.append(Product(name="Pizza", price=3000, consumers=[a, b, c]))  # 30 € = 129 zł, po 43 zł
         db.session.add(eur)
-        eur.set_rate(Decimal("4.3"), date(2026, 7, 1), "NBP")
+        db.session.commit()
+        s = summarize(t)  # brak kursu -> rachunek pominięty i oznaczony
+        assert s.total == 31999 and s.missing_rate == [eur]
+        assert sum(r.balance for r in s.people) == 0
+
+        tr = TripRate(currency="EUR")
+        tr.set(Decimal("4.3"), date(2026, 7, 1), "NBP")
+        t.rates.append(tr)
         db.session.commit()
         s = summarize(t)
-        assert s.total == 31999 + 12900
+        assert s.total == 31999 + 12900 and not s.missing_rate
         assert {r.person.name: r.balance for r in s.people} == {"Ania": 15200, "Bartek": -13300, "Czarek": -1900}
         assert s.row(c.id).paid == 12900
         assert eur.total == 3000 and eur.total_converted == 12900
-
-        eur.set_rate(None)  # brak kursu -> rachunek pominięty i oznaczony
-        db.session.commit()
-        s = summarize(t)
-        assert s.total == 31999 and s.missing_rate == [eur]
-        assert sum(r.balance for r in s.people) == 0
 
 
 def _trip(client, app, name, currency="PLN"):
@@ -392,51 +393,80 @@ def _trip(client, app, name, currency="PLN"):
         return tok, t.id, [p.id for p in t.participants]
 
 
-def test_manual_foreign_bill_fetches_rate(app, client):
-    tok, trip_id, (a, b) = _trip(client, app, "Praga")
-    r = client.post(f"/trips/{trip_id}/bills/new", data={
-        "_csrf": tok, "mode": "manual", "payer_id": a, "consumers": [a, b], "title": "Piwo",
-        "date": "2026-07-04", "amount": "500", "currency": "CZK", "next": "trip"}, follow_redirects=True)
-    html = r.get_data(as_text=True).replace("\xa0", " ")
-    assert "500,00 Kč" in html and "86,00 zł" in html
-    with app.app_context():
-        bill = Bill.query.filter_by(trip_id=trip_id).one()
-        assert (bill.currency, bill.exchange_rate, bill.rate_source) == ("CZK", "0.172", "NBP")
-        assert bill.rate_date == date(2026, 7, 1)
-        s = summarize(bill.trip)
-        assert s.row(a).balance == 4300 and s.row(b).balance == -4300
-        bill_id = bill.id
+def _manual_bill(client, tok, trip_id, payer, consumers, title, amount, currency, day="2026-07-04"):
+    return client.post(f"/trips/{trip_id}/bills/new", data={
+        "_csrf": tok, "mode": "manual", "payer_id": payer, "consumers": consumers, "title": title,
+        "date": day, "amount": amount, "currency": currency, "next": "trip"}, follow_redirects=True)
 
-    # ręczny kurs
-    client.post(f"/bills/{bill_id}/edit", data={"_csrf": tok, "payer_id": a, "title": "Piwo", "date": "2026-07-04",
-                                               "currency": "CZK", "exchange_rate": "0,18"})
+
+def _rates(app, trip_id):
     with app.app_context():
-        bill = db.session.get(Bill, bill_id)
-        assert (bill.exchange_rate, bill.rate_source) == ("0.18", "manual")
-        assert summarize(bill.trip).row(a).balance == 4500
-    # ponowne pobranie z NBP nadpisuje ręczny kurs
-    client.post(f"/bills/{bill_id}/rate", data={"_csrf": tok})
+        return {r.currency: (r.rate, r.source) for r in db.session.get(Trip, trip_id).rates}
+
+
+def test_trip_rate_fetched_once(app, client, fake_rates):
+    tok, trip_id, (a, b) = _trip(client, app, "Praga")
+    html = _manual_bill(client, tok, trip_id, a, [a, b], "Piwo", "500", "CZK").get_data(as_text=True).replace("\xa0", " ")
+    assert "500,00 Kč" in html and "86,00 zł" in html
+    assert _rates(app, trip_id) == {"CZK": ("0.172", "NBP")}
     with app.app_context():
-        assert db.session.get(Bill, bill_id).rate_source == "NBP"
-    # zmiana waluty na walutę wyjazdu kasuje kurs
-    client.post(f"/bills/{bill_id}/edit", data={"_csrf": tok, "payer_id": a, "title": "Piwo", "date": "2026-07-04",
-                                               "currency": "PLN"})
+        assert db.session.get(Trip, trip_id).rate_for("CZK").rate_date == date(2026, 7, 1)
+    nbp_calls = len([u for u in fake_rates if "nbp" in u])
+
+    # kolejny rachunek w tej samej walucie: kurs już jest, NBP nie jest pytany ponownie
+    FAKE_NBP["CZK"] = "0.2000"
+    try:
+        _manual_bill(client, tok, trip_id, b, [a, b], "Knedliki", "250", "CZK", day="2026-07-10")
+        assert len([u for u in fake_rates if "nbp" in u]) == nbp_calls
+        assert _rates(app, trip_id) == {"CZK": ("0.172", "NBP")}
+        with app.app_context():
+            s = summarize(db.session.get(Trip, trip_id))
+            assert s.total == 8600 + 4300
+
+        # kurs ręczny - dotyczy wszystkich rachunków w CZK
+        r = client.post(f"/trips/{trip_id}/rates", data={"_csrf": tok, "rate_CZK": "0,18"}, follow_redirects=True)
+        assert "Zapisano kurs" in r.get_data(as_text=True)
+        assert _rates(app, trip_id) == {"CZK": ("0.18", "manual")}
+        with app.app_context():
+            assert summarize(db.session.get(Trip, trip_id)).total == 9000 + 4500
+
+        # odśwież = najnowszy kurs NBP (nadpisuje ręczny)
+        client.post(f"/trips/{trip_id}/rates/CZK/refresh", data={"_csrf": tok})
+        assert _rates(app, trip_id) == {"CZK": ("0.2", "NBP")}
+    finally:
+        FAKE_NBP["CZK"] = "0.1720"
+
+    page = client.get(f"/trips/{trip_id}/settle").get_data(as_text=True)
+    assert 'id="kursy"' in page and 'name="rate_CZK"' in page
     with app.app_context():
-        bill = db.session.get(Bill, bill_id)
-        assert bill.currency == "PLN" and bill.exchange_rate is None and not bill.missing_rate
+        bill_id = Bill.query.filter_by(trip_id=trip_id, title="Piwo").one().id
     assert client.get(f"/bills/{bill_id}").status_code == 200
 
+    # zmiana waluty rachunku na walutę wyjazdu - kurs nie jest potrzebny
+    client.post(f"/bills/{bill_id}/edit", data={"_csrf": tok, "payer_id": a, "title": "Piwo", "currency": "PLN"})
+    with app.app_context():
+        bill = db.session.get(Bill, bill_id)
+        assert bill.currency == "PLN" and not bill.missing_rate
 
-def test_missing_rate_is_flagged(app, client):
+
+def test_refresh_rejects_external_redirect(app, client):
+    tok, trip_id, (a, b) = _trip(client, app, "Redirect")
+    _manual_bill(client, tok, trip_id, a, [a], "x", "1", "EUR")
+    r = client.post(f"/trips/{trip_id}/rates/EUR/refresh", data={"_csrf": tok, "next": "//evil.example"})
+    assert r.location.endswith(f"/trips/{trip_id}/settle#kursy")
+
+
+def test_missing_rate_is_flagged_and_can_be_set(app, client):
     tok, trip_id, (a, b) = _trip(client, app, "Egzotyka")
-    r = client.post(f"/trips/{trip_id}/bills/new", data={
-        "_csrf": tok, "mode": "manual", "payer_id": a, "consumers": [a, b], "title": "Bazar",
-        "amount": "100", "currency": "XYZ", "next": "trip"}, follow_redirects=True)
-    html = r.get_data(as_text=True).replace("\xa0", " ")
-    assert "nie mają kursu" not in html and "brak kursu" in html
-    assert "nie ma kursu - nie są liczone" in html
+    html = _manual_bill(client, tok, trip_id, a, [a, b], "Bazar", "100", "XYZ").get_data(as_text=True)
+    assert "brak kursu" in html and "bez ustalonego kursu" in html
     with app.app_context():
         assert summarize(db.session.get(Trip, trip_id)).total == 0
+    client.post(f"/trips/{trip_id}/rates", data={"_csrf": tok, "rate_XYZ": "0,5"})
+    with app.app_context():
+        assert summarize(db.session.get(Trip, trip_id)).total == 5000
+    r = client.post(f"/trips/{trip_id}/rates", data={"_csrf": tok, "rate_XYZ": "abc"}, follow_redirects=True)
+    assert "niepoprawny kurs" in r.get_data(as_text=True)
 
 
 def test_ai_detects_currency(app, client, monkeypatch):
@@ -456,10 +486,10 @@ def test_ai_detects_currency(app, client, monkeypatch):
         "_csrf": tok, "mode": "ai", "payer_id": a, "consumers": [a, b], "currency": "", "photos": (buf, "p.png")},
         content_type="multipart/form-data", follow_redirects=True)
     assert "1 EUR = 4,3 zł" in r.get_data(as_text=True).replace("\xa0", " ")
+    assert _rates(app, trip_id) == {"EUR": ("4.3", "NBP")}
     with app.app_context():
         bill = Bill.query.filter_by(trip_id=trip_id).one()
-        assert bill.currency == "EUR" and bill.exchange_rate == "4.3"
-        assert bill.total == 1250 and bill.total_mismatch is None
+        assert bill.currency == "EUR" and bill.total == 1250 and bill.total_mismatch is None
         assert summarize(bill.trip).total == 5375
 
 
@@ -474,31 +504,28 @@ def test_ai_respects_chosen_currency(app, client, monkeypatch):
         "_csrf": tok, "mode": "ai", "payer_id": a, "currency": "USD", "photos": (buf, "p.png")},
         content_type="multipart/form-data")
     with app.app_context():
-        bill = Bill.query.filter_by(trip_id=trip_id).one()
-        assert bill.currency == "USD" and bill.exchange_rate == "3.9"
+        assert Bill.query.filter_by(trip_id=trip_id).one().currency == "USD"
+    assert _rates(app, trip_id) == {"USD": ("3.9", "NBP")}
 
 
 def test_trip_currency_change(app, client):
     tok, trip_id, (a, b) = _trip(client, app, "Zmiana")
-    for cur, amount in (("PLN", "43"), ("CZK", "250")):
-        client.post(f"/trips/{trip_id}/bills/new", data={
-            "_csrf": tok, "mode": "manual", "payer_id": a, "consumers": [a, b], "title": cur,
-            "date": "2026-07-02", "amount": amount, "currency": cur, "next": "trip"})
+    _manual_bill(client, tok, trip_id, a, [a, b], "PLN", "43", "PLN", day="2026-07-02")
+    _manual_bill(client, tok, trip_id, a, [a, b], "CZK", "250", "CZK", day="2026-07-02")
     client.post(f"/trips/{trip_id}/edit", data={"_csrf": tok, "name": "Zmiana", "currency": "EUR",
                                                "participants": [a, b]})
     with app.app_context():
         t = db.session.get(Trip, trip_id)
         bills = {b_.title: b_ for b_ in t.bills}
         assert bills["PLN"].currency == "EUR" and not bills["PLN"].is_foreign  # waluta wyjazdu idzie za wyjazdem
-        assert bills["CZK"].currency == "CZK" and bills["CZK"].exchange_rate == "0.04"  # kurs wobec EUR
+        assert bills["CZK"].currency == "CZK"
         assert summarize(t).total == 4300 + 1000
+    assert _rates(app, trip_id) == {"CZK": ("0.04", "NBP")}  # kurs wobec EUR, stary (wobec PLN) usunięty
 
 
 def test_api_uses_bill_currency(app, client):
     tok, trip_id, (a, b) = _trip(client, app, "API")
-    client.post(f"/trips/{trip_id}/bills/new", data={
-        "_csrf": tok, "mode": "manual", "payer_id": a, "consumers": [a, b], "title": "Kawa",
-        "date": "2026-07-02", "amount": "10", "currency": "EUR", "next": "trip"})
+    _manual_bill(client, tok, trip_id, a, [a, b], "Kawa", "10", "EUR", day="2026-07-02")
     with app.app_context():
         prod = Product.query.one()
         pid, bid = prod.id, prod.bill_id
@@ -508,6 +535,35 @@ def test_api_uses_bill_currency(app, client):
     assert bind[f"bill-converted:{bid}"] == "≈ 86,00 zł"
     assert bind[f"balance:{a}"] == "+43,00 zł"
     assert client.get(f"/trips/{trip_id}/export.csv").get_data(as_text=True).count("4,3") == 1
+
+
+def test_upgrade_schema_moves_bill_rates_to_trip(tmp_path, monkeypatch):
+    import sqlite3
+    dbfile = tmp_path / "old.db"
+    con = sqlite3.connect(dbfile)
+    con.execute("CREATE TABLE trip (id INTEGER PRIMARY KEY, name VARCHAR(120) NOT NULL, description TEXT,"
+                " currency VARCHAR(3) NOT NULL, start_date DATE, end_date DATE, created_at DATETIME)")
+    con.execute("CREATE TABLE bill (id INTEGER PRIMARY KEY, trip_id INTEGER NOT NULL, title VARCHAR(200) NOT NULL,"
+                " category_id INTEGER, payer_id INTEGER NOT NULL, date DATE, note TEXT, declared_total INTEGER,"
+                " source VARCHAR(10), created_at DATETIME, currency VARCHAR(3) NOT NULL DEFAULT 'PLN',"
+                " exchange_rate VARCHAR(24), rate_date DATE, rate_source VARCHAR(10))")
+    con.execute("INSERT INTO trip (id, name, currency) VALUES (1, 'Stary', 'PLN')")
+    con.executemany("INSERT INTO bill (id, trip_id, title, payer_id, currency, exchange_rate, rate_date, rate_source)"
+                    " VALUES (?, 1, 'x', 1, ?, ?, ?, ?)", [
+                        (1, "EUR", "4.39", "2026-11-06", "NBP"),
+                        (2, "EUR", "4.5", None, "manual"),
+                        (3, "CZK", "0.17", "2026-11-06", "NBP"),
+                        (4, "PLN", None, None, None),
+                    ])
+    con.commit()
+    con.close()
+    monkeypatch.delenv("APP_PASSWORD", raising=False)
+    for _ in range(2):  # drugi start niczego nie dubluje
+        create_app({"TESTING": True, "DATA_DIR": str(tmp_path), "SQLALCHEMY_DATABASE_URI": f"sqlite:///{dbfile}"})
+    con = sqlite3.connect(dbfile)
+    rows = con.execute("SELECT currency, rate, source FROM trip_rate ORDER BY currency").fetchall()
+    assert rows == [("CZK", "0.17", "NBP"), ("EUR", "4.5", "manual")]
+    assert con.execute("SELECT COUNT(*) FROM bill WHERE exchange_rate IS NOT NULL").fetchone() == (0,)
 
 
 def test_upgrade_schema_adds_bill_currency(tmp_path, monkeypatch):
@@ -526,6 +582,5 @@ def test_upgrade_schema_adds_bill_currency(tmp_path, monkeypatch):
     monkeypatch.delenv("APP_PASSWORD", raising=False)
     create_app({"TESTING": True, "DATA_DIR": str(tmp_path), "SQLALCHEMY_DATABASE_URI": f"sqlite:///{dbfile}"})
     con = sqlite3.connect(dbfile)
-    cols = [r[1] for r in con.execute("PRAGMA table_info(bill)")]
-    assert {"currency", "exchange_rate", "rate_date", "rate_source"} <= set(cols)
+    assert "currency" in [r[1] for r in con.execute("PRAGMA table_info(bill)")]
     assert con.execute("SELECT currency FROM bill WHERE id = 1").fetchone() == ("EUR",)

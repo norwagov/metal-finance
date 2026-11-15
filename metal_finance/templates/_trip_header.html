@@ -7,6 +7,7 @@
       <div class="small text-secondary">
         {% if trip.start_date %}<i class="bi bi-calendar3"></i> {{ trip.start_date|pldate }}{% if trip.end_date and trip.end_date != trip.start_date %} – {{ trip.end_date|pldate }}{% endif %} · {% endif %}
         {{ trip.bills|length }} rach. · waluta {{ trip.currency }}
+        {% for cur, tr in trip.rate_rows %}{% if loop.first %} · <a href="{{ url_for('trips.settle', trip_id=trip.id) }}#kursy" class="text-secondary" title="Kursy walut wyjazdu">{% endif %}{{ cur }} {{ tr.value|rate if tr else '?' }}{{ ', ' if not loop.last }}{% if loop.last %}</a>{% endif %}{% endfor %}
       </div>
       <div class="d-flex flex-wrap gap-1 mt-2">
         {% for p in trip.participants %}{{ m.person_chip(p) }}{% endfor %}
@@ -33,9 +34,9 @@
 {% if summary.missing_rate %}
 <div class="alert alert-danger py-2 small">
   <i class="bi bi-currency-exchange"></i>
-  {{ summary.missing_rate|length }} rach. w obcej walucie nie ma kursu - nie są liczone w rozliczeniu:
+  {{ summary.missing_rate|length }} rach. w walucie bez ustalonego kursu - nie są liczone w rozliczeniu:
   {% for b in summary.missing_rate %}<a href="{{ url_for('bills.show', bill_id=b.id) }}" class="alert-link">{{ b.title }} ({{ b.currency }})</a>{{ ', ' if not loop.last }}{% endfor %}.
-  Wpisz kurs ręcznie albo pobierz go ponownie na stronie rachunku.
+  <a href="{{ url_for('trips.settle', trip_id=trip.id) }}#kursy" class="alert-link">Ustaw kurs w Kursach walut</a>.
 </div>
 {% endif %}
 {% if summary.unassigned %}

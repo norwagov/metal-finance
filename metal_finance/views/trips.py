@@ -8,9 +8,14 @@ from flask import Blueprint, Response, flash, redirect, render_template, request
 
 from .. import receipt_ai
 from ..models import Payment, Person, Trip, db
-from ..money import CURRENCIES, fmt_amount, fmt_input, fmt_qty, fmt_rate, normalize_currency, parse_money, round_cents
+from ..money import (
+    CURRENCIES, fmt_amount, fmt_input, fmt_qty, fmt_rate, normalize_currency, parse_money, parse_rate, round_cents,
+)
 from ..settlement import bill_shares, product_shares, summarize
-from . import clean, find_or_create_people, int_or_none, parse_date, remove_files, update_rate
+from . import (
+    clean, ensure_rate, find_or_create_people, int_or_none, parse_date, rate_label, refresh_rate, remove_files,
+    set_manual_rate,
+)
 
 bp = Blueprint("trips", __name__)
 
@@ -33,16 +38,19 @@ def _trip_form_people() -> list[Person]:
 
 def _change_currency(trip: Trip, old: str) -> None:
     """Po zmianie waluty wyjazdu: rachunki w starej walucie wyjazdu przechodzą na nową (jak dotąd -
-    to zwykle poprawka pomyłki), a kursy pozostałych pobieramy na nowo, bo były liczone wobec starej."""
-    problems = 0
+    to zwykle poprawka pomyłki), a kursy walut pobieramy na nowo, bo były liczone wobec starej."""
     for b in trip.bills:
         if b.currency == old:
             b.currency = trip.currency
-        b.set_rate(None)
-        if b.is_foreign:
-            problems += any(level != "info" for level, _ in update_rate(b))
-    if problems:
-        flash(f"Nie udało się pobrać kursu dla {problems} rach. - wpisz go ręcznie na stronie rachunku.", "warning")
+    trip.rates.clear()
+    db.session.flush()
+    failed = []
+    for cur in trip.foreign_currencies:
+        first = min((b.date or date.today() for b in trip.bills if b.currency == cur), default=None)
+        if any(level != "info" for level, _ in ensure_rate(trip, cur, first)):
+            failed.append(cur)
+    if failed:
+        flash(f"Nie udało się pobrać kursu: {', '.join(failed)} - wpisz go ręcznie w Rozliczenie → Kursy walut.", "warning")
 
 
 def _fill_trip(trip: Trip) -> str | None:
@@ -189,6 +197,47 @@ def add_payment(trip_id: int):
     db.session.commit()
     flash(f"Zapisano spłatę: {sender.name} → {receiver.name} {fmt_amount(amount, trip.currency)}.", "success")
     return redirect(url_for("trips.settle", trip_id=trip.id))
+
+
+@bp.post("/trips/<int:trip_id>/rates")
+def save_rates(trip_id: int):
+    """Ręczne kursy walut wyjazdu (pola rate_<WALUTA>)."""
+    trip = db.get_or_404(Trip, trip_id)
+    changed, errors = [], []
+    for cur in trip.foreign_currencies:
+        raw = request.form.get(f"rate_{cur}")
+        try:
+            value = parse_rate(raw)
+        except ValueError:
+            errors.append(f"{cur}: niepoprawny kurs „{raw}”")
+            continue
+        if value is not None and set_manual_rate(trip, cur, value):
+            changed.append(rate_label(trip, cur))
+    db.session.commit()
+    for e in errors:
+        flash(e, "danger")
+    if changed:
+        flash("Zapisano kurs: " + "; ".join(changed) + ".", "success")
+    elif not errors:
+        flash("Kursy bez zmian.", "info")
+    return redirect(url_for("trips.settle", trip_id=trip.id) + "#kursy")
+
+
+@bp.post("/trips/<int:trip_id>/rates/<currency>/refresh")
+def refresh_rate_view(trip_id: int, currency: str):
+    """Pobiera najnowszy kurs NBP dla waluty (nadpisuje kurs ręczny)."""
+    trip = db.get_or_404(Trip, trip_id)
+    cur = normalize_currency(currency)
+    if cur not in trip.foreign_currencies:
+        flash("Ta waluta nie występuje w rachunkach wyjazdu.", "warning")
+    else:
+        for level, msg in refresh_rate(trip, cur):
+            flash(msg, level)
+        db.session.commit()
+    nxt = request.form.get("next", "")
+    if not (nxt.startswith("/") and not nxt.startswith("//")):
+        nxt = url_for("trips.settle", trip_id=trip.id) + "#kursy"
+    return redirect(nxt)
 
 
 @bp.post("/payments/<int:payment_id>/delete")
