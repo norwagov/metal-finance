@@ -1,0 +1,71 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Waluty · {{ trip.name }}{% endblock %}
+{% block content %}
+{% include '_trip_header.html' %}
+{% set cur = trip.currency %}
+
+<div class="row g-4">
+  <div class="col-12 col-lg-7">
+    <div class="card mb-4">
+      <div class="card-header fw-semibold"><i class="bi bi-currency-exchange"></i> Kursy walut</div>
+      {% if rows %}
+      <form method="post" action="{{ url_for('trips.save_rates', trip_id=trip.id) }}">
+        {{ m.csrf() }}
+        <ul class="list-group list-group-flush">
+          {% for r in rows %}
+          <li class="list-group-item py-3">
+            <div class="d-flex flex-wrap align-items-center gap-3">
+              <div class="flex-grow-1" style="min-width: 220px">
+                <div class="input-group">
+                  <span class="input-group-text">1 {{ r.currency }} =</span>
+                  <input class="form-control money {% if not r.rate %}is-invalid{% endif %}" name="rate_{{ r.currency }}" inputmode="decimal"
+                         value="{{ r.rate.value|rate if r.rate else '' }}" placeholder="brak kursu" aria-label="Kurs {{ r.currency }}">
+                  <span class="input-group-text">{{ currency_symbol(cur) }}</span>
+                  <button type="submit" class="btn btn-outline-secondary" form="refresh-{{ r.currency }}" title="Pobierz najnowszy kurs z NBP"><i class="bi bi-arrow-repeat"></i></button>
+                </div>
+                <div class="form-text">
+                  {% if not r.rate %}<span class="text-danger">brak kursu - rachunki w {{ r.currency }} nie są liczone w rozliczeniu</span>
+                  {% elif r.rate.source == 'manual' %}kurs ręczny
+                  {% else %}{{ r.rate.source }}{% if r.rate.rate_date %} z {{ r.rate.rate_date|pldate }}{% endif %}{% endif %}
+                </div>
+              </div>
+              <div class="text-end small">
+                <div class="fw-semibold money">{{ r.total|money(r.currency) }}</div>
+                <div class="text-secondary money">{{ ('≈ ' ~ r.converted|money(cur)) if r.converted is not none else '—' }}</div>
+                <div class="text-secondary">{{ r.bills|length }} rach.</div>
+              </div>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+        <div class="card-footer text-end">
+          <button class="btn btn-metal btn-sm"><i class="bi bi-check-lg"></i> Zapisz kursy</button>
+        </div>
+      </form>
+      {% for r in rows %}
+      <form id="refresh-{{ r.currency }}" method="post" action="{{ url_for('trips.refresh_rate_view', trip_id=trip.id, currency=r.currency) }}"
+            {% if r.rate and r.rate.source == 'manual' %}data-confirm="Zastąpić ręczny kurs {{ r.currency }} najnowszym kursem NBP?"{% endif %}>{{ m.csrf() }}</form>
+      {% endfor %}
+      {% else %}
+      <div class="card-body text-center text-secondary py-5">
+        <i class="bi bi-currency-exchange fs-1 d-block mb-2"></i>
+        Wszystkie rachunki są w {{ cur }} - nie trzeba żadnych kursów.
+        <div class="small mt-1">Gdy dodasz rachunek w innej walucie (albo Claude rozpozna ją na paragonie), kurs pobierze się tu z NBP.</div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div class="card">
+      <div class="card-header fw-semibold"><i class="bi bi-info-circle"></i> Jak to działa</div>
+      <div class="card-body small text-secondary vstack gap-2">
+        <div>Wyjazd rozliczamy w <strong class="text-body">{{ cur }}</strong>. Rachunki mogą być w innych walutach - pozycje zostają w walucie rachunku, a salda i przelewy liczymy po kursie z tej strony.</div>
+        <div>Kurs jest <strong class="text-body">jeden na walutę dla całego wyjazdu</strong>. Pobiera się z NBP tylko raz - gdy waluta pierwszy raz pojawia się w rachunkach (kurs z dnia tego rachunku).</div>
+        <div>Potem sam się nie zmienia: wpisz własny (np. z wyciągu karty) albo kliknij <i class="bi bi-arrow-repeat"></i>, żeby pobrać najnowszy kurs NBP.</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

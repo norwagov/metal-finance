@@ -27,7 +27,7 @@
 {% if bill.missing_rate %}
 <div class="alert alert-danger py-2 small">
   <i class="bi bi-currency-exchange"></i> Rachunek jest w {{ bill.currency }}, a wyjazd rozliczany w {{ trip.currency }} - brak kursu, więc rachunek nie jest liczony w rozliczeniu.
-  Wpisz kurs w <a href="{{ url_for('trips.settle', trip_id=trip.id) }}#kursy" class="alert-link">Rozliczenie → Kursy walut</a> albo spróbuj
+  Wpisz kurs w <a href="{{ url_for('trips.rates', trip_id=trip.id) }}" class="alert-link">zakładce Waluty</a> albo spróbuj
   <button type="submit" form="refresh-rate" class="btn btn-link alert-link p-0 align-baseline small">pobrać go z NBP</button>.
 </div>
 {% endif %}
@@ -162,7 +162,7 @@
             <label class="form-label small">Kurs</label>
             {% if bill.is_foreign %}
             <div class="small {{ 'text-danger' if bill.missing_rate else '' }}">{{ rate_label or 'brak kursu' }}</div>
-            <div class="form-text mt-0">wspólny dla wszystkich rachunków w {{ bill.currency }} - <a href="{{ url_for('trips.settle', trip_id=trip.id) }}#kursy">zmień w wyjeździe</a></div>
+            <div class="form-text mt-0">wspólny dla wszystkich rachunków w {{ bill.currency }} - <a href="{{ url_for('trips.rates', trip_id=trip.id) }}">zmień w wyjeździe</a></div>
             {% else %}
             <div class="form-text mt-0">nie trzeba - rachunek w walucie wyjazdu ({{ trip.currency }})</div>
             {% endif %}

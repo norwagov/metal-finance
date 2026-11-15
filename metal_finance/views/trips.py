@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import date
+from fractions import Fraction
 
 from flask import Blueprint, Response, flash, redirect, render_template, request, url_for
 
@@ -50,7 +51,7 @@ def _change_currency(trip: Trip, old: str) -> None:
         if any(level != "info" for level, _ in ensure_rate(trip, cur, first)):
             failed.append(cur)
     if failed:
-        flash(f"Nie udało się pobrać kursu: {', '.join(failed)} - wpisz go ręcznie w Rozliczenie → Kursy walut.", "warning")
+        flash(f"Nie udało się pobrać kursu: {', '.join(failed)} - wpisz go ręcznie w zakładce Waluty.", "warning")
 
 
 def _fill_trip(trip: Trip) -> str | None:
@@ -199,6 +200,18 @@ def add_payment(trip_id: int):
     return redirect(url_for("trips.settle", trip_id=trip.id))
 
 
+@bp.get("/trips/<int:trip_id>/rates")
+def rates(trip_id: int):
+    trip = db.get_or_404(Trip, trip_id)
+    rows = []
+    for cur, tr in trip.rate_rows:
+        bills = [b for b in trip.bills if b.currency == cur]
+        total = sum(b.total for b in bills)
+        rows.append({"currency": cur, "rate": tr, "bills": bills, "total": total,
+                     "converted": total * Fraction(tr.value) if tr else None})
+    return render_template("trip_rates.html", trip=trip, summary=summarize(trip), tab="rates", rows=rows)
+
+
 @bp.post("/trips/<int:trip_id>/rates")
 def save_rates(trip_id: int):
     """Ręczne kursy walut wyjazdu (pola rate_<WALUTA>)."""
@@ -220,7 +233,7 @@ def save_rates(trip_id: int):
         flash("Zapisano kurs: " + "; ".join(changed) + ".", "success")
     elif not errors:
         flash("Kursy bez zmian.", "info")
-    return redirect(url_for("trips.settle", trip_id=trip.id) + "#kursy")
+    return redirect(url_for("trips.rates", trip_id=trip.id))
 
 
 @bp.post("/trips/<int:trip_id>/rates/<currency>/refresh")
@@ -236,7 +249,7 @@ def refresh_rate_view(trip_id: int, currency: str):
         db.session.commit()
     nxt = request.form.get("next", "")
     if not (nxt.startswith("/") and not nxt.startswith("//")):
-        nxt = url_for("trips.settle", trip_id=trip.id) + "#kursy"
+        nxt = url_for("trips.rates", trip_id=trip.id)
     return redirect(nxt)
 
 

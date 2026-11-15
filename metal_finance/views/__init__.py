@@ -115,12 +115,12 @@ def ensure_rate(trip: Trip, currency: str | None, day: date | None = None) -> li
     got = _fetch(trip, currency, day)
     if isinstance(got, str):
         return [("danger", f"{got} Rachunki w {currency} nie wejdą do rozliczenia, dopóki nie wpiszesz kursu "
-                           f"(Rozliczenie → Kursy walut).")]
+                           f"(zakładka Waluty).")]
     tr = TripRate(currency=currency)
     tr.set(got.value, got.day, got.source)
     trip.rates.append(tr)
     return [("info", f"Nowa waluta w wyjeździe: {currency}. Kurs pobrany raz i używany dla wszystkich rachunków "
-                     f"w {currency}: {rate_label(trip, currency)}. Zmienisz go w Rozliczenie → Kursy walut.")]
+                     f"w {currency}: {rate_label(trip, currency)}. Zmienisz go w zakładce Waluty.")]
 
 
 def refresh_rate(trip: Trip, currency: str) -> list[tuple[str, str]]:

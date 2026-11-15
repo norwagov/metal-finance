@@ -175,6 +175,7 @@ def test_full_flow(app, client):
     r = client.get(f"/trips/{trip_id}/export.csv")
     assert r.status_code == 200 and "Hot-dog" in r.get_data(as_text=True)
     assert client.get(f"/trips/{trip_id}/settle").status_code == 200
+    assert "nie trzeba żadnych kursów" in client.get(f"/trips/{trip_id}/rates").get_data(as_text=True)
 
 
 def test_ai_flow_with_photo(app, client, monkeypatch):
@@ -436,8 +437,9 @@ def test_trip_rate_fetched_once(app, client, fake_rates):
     finally:
         FAKE_NBP["CZK"] = "0.1720"
 
-    page = client.get(f"/trips/{trip_id}/settle").get_data(as_text=True)
-    assert 'id="kursy"' in page and 'name="rate_CZK"' in page
+    page = client.get(f"/trips/{trip_id}/rates").get_data(as_text=True)
+    assert 'name="rate_CZK"' in page and "2 rach." in page
+    assert 'name="rate_CZK"' not in client.get(f"/trips/{trip_id}/settle").get_data(as_text=True)
     with app.app_context():
         bill_id = Bill.query.filter_by(trip_id=trip_id, title="Piwo").one().id
     assert client.get(f"/bills/{bill_id}").status_code == 200
@@ -453,7 +455,7 @@ def test_refresh_rejects_external_redirect(app, client):
     tok, trip_id, (a, b) = _trip(client, app, "Redirect")
     _manual_bill(client, tok, trip_id, a, [a], "x", "1", "EUR")
     r = client.post(f"/trips/{trip_id}/rates/EUR/refresh", data={"_csrf": tok, "next": "//evil.example"})
-    assert r.location.endswith(f"/trips/{trip_id}/settle#kursy")
+    assert r.location.endswith(f"/trips/{trip_id}/rates")
 
 
 def test_missing_rate_is_flagged_and_can_be_set(app, client):

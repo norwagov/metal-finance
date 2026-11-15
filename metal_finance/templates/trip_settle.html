@@ -93,36 +93,6 @@
   </div>
 
   <div class="col-12 col-xl-5">
-    {% if trip.rate_rows %}
-    <div class="card mb-4" id="kursy">
-      <div class="card-header fw-semibold"><i class="bi bi-currency-exchange"></i> Kursy walut</div>
-      <form method="post" action="{{ url_for('trips.save_rates', trip_id=trip.id) }}" class="card-body vstack gap-2">
-        {{ m.csrf() }}
-        <div class="small text-secondary">Jeden kurs na walutę dla całego wyjazdu. Pobierany z NBP raz, gdy waluta pojawia się w rachunkach - potem zmieniasz go sam albo odświeżasz.</div>
-        {% for cur, tr in trip.rate_rows %}
-        <div>
-          <div class="input-group">
-            <span class="input-group-text">1 {{ cur }} =</span>
-            <input class="form-control money {% if not tr %}is-invalid{% endif %}" name="rate_{{ cur }}" inputmode="decimal" value="{{ tr.value|rate if tr else '' }}" placeholder="brak kursu" aria-label="Kurs {{ cur }}">
-            <span class="input-group-text">{{ currency_symbol(trip.currency) }}</span>
-            <button type="submit" class="btn btn-outline-secondary" form="refresh-{{ cur }}" title="Pobierz najnowszy kurs z NBP"><i class="bi bi-arrow-repeat"></i></button>
-          </div>
-          <div class="form-text">
-            {% if not tr %}<span class="text-danger">brak kursu - rachunki w {{ cur }} nie są liczone</span>
-            {% elif tr.source == 'manual' %}kurs ręczny
-            {% else %}{{ tr.source }}{% if tr.rate_date %} z {{ tr.rate_date|pldate }}{% endif %}{% endif %}
-          </div>
-        </div>
-        {% endfor %}
-        <button class="btn btn-metal btn-sm align-self-end"><i class="bi bi-check-lg"></i> Zapisz kursy</button>
-      </form>
-      {% for cur, tr in trip.rate_rows %}
-      <form id="refresh-{{ cur }}" method="post" action="{{ url_for('trips.refresh_rate_view', trip_id=trip.id, currency=cur) }}"
-            {% if tr and tr.source == 'manual' %}data-confirm="Zastąpić ręczny kurs {{ cur }} najnowszym kursem NBP?"{% endif %}>{{ m.csrf() }}</form>
-      {% endfor %}
-    </div>
-    {% endif %}
-
     <div class="card mb-4">
       <div class="card-header fw-semibold"><i class="bi bi-cash-coin"></i> Zapisz spłatę</div>
       <form method="post" action="{{ url_for('trips.add_payment', trip_id=trip.id) }}" class="card-body vstack gap-2">
